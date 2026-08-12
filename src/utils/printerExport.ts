@@ -11,24 +11,23 @@ const getLabelImageCandidates = (label: LabelItem): string[] => {
   return Array.from(new Set(candidates.filter((src): src is string => Boolean(src))));
 };
 
-const loadImage = (src: string): Promise<{ dataUrl: string; width: number; height: number }> =>
-  new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = img.naturalWidth;
-      canvas.height = img.naturalHeight;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
-        reject(new Error('Canvas non disponible'));
-        return;
-      }
-      ctx.drawImage(img, 0, 0);
-      resolve({ dataUrl: canvas.toDataURL('image/jpeg', 0.92), width: img.naturalWidth, height: img.naturalHeight });
-    };
-    img.onerror = () => reject(new Error(`Impossible de charger l'image de l'étiquette : ${src}`));
-    img.src = src;
+// Récupère l'image telle quelle (octets d'origine, sans passer par un <canvas>) pour éviter
+// toute recompression JPEG et tout écart de couleur induits par un aller-retour de rendu.
+const loadImage = async (src: string): Promise<{ dataUrl: string; width: number; height: number }> => {
+  const response = await fetch(src);
+  if (!response.ok) {
+    throw new Error(`Impossible de charger l'image de l'étiquette : ${src}`);
+  }
+  const blob = await response.blob();
+  const bitmap = await createImageBitmap(blob);
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error ?? new Error('Lecture du fichier échouée'));
+    reader.readAsDataURL(blob);
   });
+  return { dataUrl, width: bitmap.width, height: bitmap.height };
+};
 
 // Essaie chaque source candidate dans l'ordre jusqu'à ce qu'une image se charge réellement.
 const loadImageWithFallback = async (label: LabelItem) => {
@@ -41,6 +40,13 @@ const loadImageWithFallback = async (label: LabelItem) => {
   }
   return null;
 };
+
+// Taille d'impression cible d'une étiquette (format le plus courant : 2 x 3,25 po).
+// Les étiquettes ne sont plus étirées pour remplir la page — leur image est simplement
+// contenue dans ce format, ce qui garantit une résolution d'impression élevée
+// (les fichiers sources, ~900x1275px, y impriment autour de 400+ DPI).
+const LABEL_WIDTH_MM = 2 * 25.4;
+const LABEL_HEIGHT_MM = 3.25 * 25.4;
 
 // Génère un PDF prêt pour l'imprimeur : une page de garde récapitulative,
 // suivie d'une page par exemplaire commandé de chaque étiquette.
@@ -114,9 +120,8 @@ export const generatePrinterPDF = async (labels: LabelItem[], stores: StoreItem[
       continue;
     }
 
-    const maxW = pageWidth - margin * 2;
-    const maxH = pageHeight - margin * 2;
-    const ratio = Math.min(maxW / image.width, maxH / image.height);
+    // L'image est contenue dans le format cible et centrée sur la page.
+    const ratio = Math.min(LABEL_WIDTH_MM / image.width, LABEL_HEIGHT_MM / image.height);
     const w = image.width * ratio;
     const h = image.height * ratio;
     const x = (pageWidth - w) / 2;
