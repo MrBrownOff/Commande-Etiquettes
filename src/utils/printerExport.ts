@@ -1,7 +1,18 @@
-import jsPDF from 'jspdf';
+import { PDFDocument, PDFFont, StandardFonts, rgb } from 'pdf-lib';
 import { LabelItem, StoreItem } from '../store/store';
 
-// Candidats à essayer dans l'ordre : les URL blob issues d'un import de fichiers ne
+const PT_PER_MM = 72 / 25.4;
+const PAGE_WIDTH = 595.28; // A4 en points (210mm)
+const PAGE_HEIGHT = 841.89; // A4 en points (297mm)
+const MARGIN_MM = 15;
+
+// Taille d'impression cible d'une étiquette (format le plus courant : 2 x 3,25 po).
+// L'étiquette n'est jamais agrandie au-delà de cette taille — elle y est simplement
+// contenue, ce qui garantit une résolution d'impression élevée quelle que soit la source.
+const LABEL_WIDTH_PT = 2 * 72;
+const LABEL_HEIGHT_PT = 3.25 * 72;
+
+// Candidats JPEG à essayer dans l'ordre : les URL blob issues d'un import de fichiers ne
 // survivent pas à un rechargement de page ou à une restauration de projet JSON — dans
 // ce cas on doit se rabattre sur le fichier statique nommé d'après la référence.
 const getLabelImageCandidates = (label: LabelItem): string[] => {
@@ -11,42 +22,45 @@ const getLabelImageCandidates = (label: LabelItem): string[] => {
   return Array.from(new Set(candidates.filter((src): src is string => Boolean(src))));
 };
 
-// Récupère l'image telle quelle (octets d'origine, sans passer par un <canvas>) pour éviter
-// toute recompression JPEG et tout écart de couleur induits par un aller-retour de rendu.
-const loadImage = async (src: string): Promise<{ dataUrl: string; width: number; height: number }> => {
-  const response = await fetch(src);
-  if (!response.ok) {
-    throw new Error(`Impossible de charger l'image de l'étiquette : ${src}`);
-  }
-  const blob = await response.blob();
-  const bitmap = await createImageBitmap(blob);
-  const dataUrl = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = () => reject(reader.error ?? new Error('Lecture du fichier échouée'));
-    reader.readAsDataURL(blob);
-  });
-  return { dataUrl, width: bitmap.width, height: bitmap.height };
-};
+const getLabelPdfCandidate = (label: LabelItem): string =>
+  `${import.meta.env.BASE_URL}labels-pdf/${label.reference}.pdf`;
 
-// Essaie chaque source candidate dans l'ordre jusqu'à ce qu'une image se charge réellement.
-const loadImageWithFallback = async (label: LabelItem) => {
+type EmbeddedLabel =
+  | { kind: 'pdf'; source: Awaited<ReturnType<PDFDocument['embedPdf']>>[number]; width: number; height: number }
+  | { kind: 'jpg'; source: Awaited<ReturnType<PDFDocument['embedJpg']>>; width: number; height: number };
+
+// Essaie d'abord la version PDF vectorielle de l'étiquette (qualité et couleurs fidèles
+// à l'original, indépendamment de la résolution), puis se rabat sur le JPEG si aucun PDF
+// n'existe pour cette référence.
+const embedLabel = async (pdfDoc: PDFDocument, label: LabelItem): Promise<EmbeddedLabel | null> => {
+  try {
+    const res = await fetch(getLabelPdfCandidate(label));
+    if (res.ok) {
+      const bytes = await res.arrayBuffer();
+      const srcDoc = await PDFDocument.load(bytes);
+      if (srcDoc.getPageCount() > 0) {
+        const [embedded] = await pdfDoc.embedPdf(srcDoc, [0]);
+        return { kind: 'pdf', source: embedded, width: embedded.width, height: embedded.height };
+      }
+    }
+  } catch {
+    // Pas de PDF exploitable pour cette référence : on se rabat sur le JPEG.
+  }
+
   for (const src of getLabelImageCandidates(label)) {
     try {
-      return await loadImage(src);
+      const res = await fetch(src);
+      if (!res.ok) continue;
+      const bytes = await res.arrayBuffer();
+      const image = await pdfDoc.embedJpg(bytes);
+      return { kind: 'jpg', source: image, width: image.width, height: image.height };
     } catch {
       // on essaie la source suivante
     }
   }
+
   return null;
 };
-
-// Taille d'impression cible d'une étiquette (format le plus courant : 2 x 3,25 po).
-// Les étiquettes ne sont plus étirées pour remplir la page — leur image est simplement
-// contenue dans ce format, ce qui garantit une résolution d'impression élevée
-// (les fichiers sources, ~900x1275px, y impriment autour de 400+ DPI).
-const LABEL_WIDTH_MM = 2 * 25.4;
-const LABEL_HEIGHT_MM = 3.25 * 25.4;
 
 // Génère un PDF prêt pour l'imprimeur : une page de garde récapitulative,
 // suivie d'une page par exemplaire commandé de chaque étiquette.
@@ -56,12 +70,12 @@ export const generatePrinterPDF = async (labels: LabelItem[], stores: StoreItem[
     throw new Error("Aucune étiquette n'a de quantité renseignée.");
   }
 
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
-  const pageWidth = doc.internal.pageSize.getWidth();
-  const pageHeight = doc.internal.pageSize.getHeight();
-  const margin = 15;
-  const total = orderedLabels.reduce((sum, l) => sum + (l.quantity ?? 0), 0);
+  const pdfDoc = await PDFDocument.create();
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const black = rgb(0, 0, 0);
 
+  const total = orderedLabels.reduce((sum, l) => sum + (l.quantity ?? 0), 0);
   const storeNames = Array.from(
     new Set(
       orderedLabels
@@ -70,41 +84,52 @@ export const generatePrinterPDF = async (labels: LabelItem[], stores: StoreItem[
     )
   ).sort();
 
+  // Convertit une distance "depuis le haut de la page" (en mm) vers l'axe Y de pdf-lib
+  // (origine en bas de page, en points).
+  const yFromTop = (mm: number) => PAGE_HEIGHT - mm * PT_PER_MM;
+  const mmToPt = (mm: number) => mm * PT_PER_MM;
+  const drawText = (
+    page: Awaited<ReturnType<PDFDocument['addPage']>>,
+    text: string,
+    xMm: number,
+    yMmFromTop: number,
+    size: number,
+    useFont: PDFFont = font
+  ) => {
+    page.drawText(text, { x: mmToPt(xMm), y: yFromTop(yMmFromTop), size, font: useFont, color: black });
+  };
+
   // Page de garde — simple récapitulatif : nombre d'étiquettes et magasins concernés
-  doc.setFontSize(18);
-  doc.text('Bon de commande — Étiquettes', margin, margin + 5);
-  doc.setFontSize(11);
-  doc.text(
+  const coverPage = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+  drawText(coverPage, 'Bon de commande — Étiquettes', MARGIN_MM, MARGIN_MM + 5, 18, fontBold);
+  drawText(
+    coverPage,
     `Généré le ${new Date().toLocaleDateString('fr-CA')} — ${orderedLabels.length} référence(s), ${total} étiquette(s) au total`,
-    margin,
-    margin + 15
+    MARGIN_MM,
+    MARGIN_MM + 15,
+    11
   );
+  drawText(coverPage, 'Magasin(s) concerné(s) :', MARGIN_MM, MARGIN_MM + 28, 13, fontBold);
 
-  doc.setFontSize(13);
-  doc.setFont('helvetica', 'bold');
-  doc.text('Magasin(s) concerné(s) :', margin, margin + 28);
-  doc.setFont('helvetica', 'normal');
-
-  const contentTop = margin + 36;
-  const contentBottom = pageHeight - margin;
+  const contentTop = MARGIN_MM + 36;
+  const contentBottom = PAGE_HEIGHT / PT_PER_MM - MARGIN_MM;
   const availableHeight = contentBottom - contentTop;
 
   // Bascule automatiquement sur plusieurs colonnes si la liste de magasins est longue
   const columns = storeNames.length > Math.floor(availableHeight / 7) ? 2 : 1;
   const rowsPerColumn = Math.ceil(storeNames.length / columns) || 1;
   const rowHeight = Math.min(8, Math.max(5, availableHeight / rowsPerColumn));
-  const colWidth = (pageWidth - margin * 2) / columns;
+  const colWidth = (PAGE_WIDTH / PT_PER_MM - MARGIN_MM * 2) / columns;
 
-  doc.setFontSize(12);
   if (storeNames.length === 0) {
-    doc.text('Aucun magasin assigné.', margin, contentTop);
+    drawText(coverPage, 'Aucun magasin assigné.', MARGIN_MM, contentTop, 12);
   } else {
     for (let col = 0; col < columns; col++) {
-      const colX = margin + col * colWidth;
+      const colX = MARGIN_MM + col * colWidth;
       let y = contentTop;
       const colNames = storeNames.slice(col * rowsPerColumn, (col + 1) * rowsPerColumn);
       for (const name of colNames) {
-        doc.text(`•  ${name}`, colX, y);
+        drawText(coverPage, `•  ${name}`, colX, y, 12);
         y += rowHeight;
       }
     }
@@ -114,26 +139,37 @@ export const generatePrinterPDF = async (labels: LabelItem[], stores: StoreItem[
   const missingLabels: string[] = [];
   for (const label of orderedLabels) {
     const qty = label.quantity ?? 0;
-    const image = await loadImageWithFallback(label);
-    if (!image) {
+    const embedded = await embedLabel(pdfDoc, label);
+    if (!embedded) {
       missingLabels.push(label.reference);
       continue;
     }
 
-    // L'image est contenue dans le format cible et centrée sur la page.
-    const ratio = Math.min(LABEL_WIDTH_MM / image.width, LABEL_HEIGHT_MM / image.height);
-    const w = image.width * ratio;
-    const h = image.height * ratio;
-    const x = (pageWidth - w) / 2;
-    const imgY = (pageHeight - h) / 2;
+    // L'étiquette est contenue dans le format cible et centrée sur la page.
+    const ratio = Math.min(LABEL_WIDTH_PT / embedded.width, LABEL_HEIGHT_PT / embedded.height);
+    const w = embedded.width * ratio;
+    const h = embedded.height * ratio;
+    const x = (PAGE_WIDTH - w) / 2;
+    const y = (PAGE_HEIGHT - h) / 2;
 
     for (let i = 0; i < qty; i++) {
-      doc.addPage();
-      doc.addImage(image.dataUrl, 'JPEG', x, imgY, w, h);
+      const page = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+      if (embedded.kind === 'pdf') {
+        page.drawPage(embedded.source, { x, y, width: w, height: h });
+      } else {
+        page.drawImage(embedded.source, { x, y, width: w, height: h });
+      }
     }
   }
 
-  doc.save(`commande_impression_etiquettes_${new Date().toISOString().slice(0, 10)}.pdf`);
+  const pdfBytes = await pdfDoc.save();
+  const blob = new Blob([pdfBytes as BlobPart], { type: 'application/pdf' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `commande_impression_etiquettes_${new Date().toISOString().slice(0, 10)}.pdf`;
+  a.click();
+  URL.revokeObjectURL(url);
 
   return {
     missingLabels,
