@@ -4,8 +4,17 @@ import { Sidebar } from './components/Sidebar';
 import { StoresView } from './components/StoresView';
 import { ProjectView } from './components/ProjectView';
 import { LabelsView } from './components/LabelsView';
+import { RepresentantView } from './components/RepresentantView';
 import { AuthGate } from './components/AuthGate';
 import { useAppStore } from './store/store';
+import { auth } from './firebase';
+
+// Convention de compte : tout email de connexion contenant "representant" bascule
+// automatiquement sur la vue allégée (sélection d'étiquettes à imprimer, sans
+// gestion des magasins). Aucune règle Firestore distincte n'est nécessaire : les
+// deux profils partagent le même accès en lecture/écriture, seule l'interface change.
+const isRepresentantAccount = (email?: string | null) =>
+  (email ?? '').toLowerCase().includes('representant');
 
 function AppContent() {
   const [currentTab, setCurrentTab] = useState<'labels' | 'stores' | 'project'>('labels');
@@ -17,6 +26,10 @@ function AppContent() {
         <Loader2 className="animate-spin text-orange-500" size={32} />
       </div>
     );
+  }
+
+  if (isRepresentantAccount(auth.currentUser?.email)) {
+    return <RepresentantView />;
   }
 
   return (
