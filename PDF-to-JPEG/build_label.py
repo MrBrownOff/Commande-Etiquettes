@@ -191,8 +191,55 @@ def build_label(source_pdf_path: str, reference: str,
     )
 
 
+def build_batch(source_dir: str, pdf_out_dir: str = "PDF", jpg_out_dir: str = "JPEG",
+                 dpi: int = 300):
+    """Traite tous les fichiers .pdf d'un dossier source en une seule passe.
+    La référence de chaque étiquette est déduite du nom de fichier (sans
+    l'extension), exactement comme le fait l'application au moment de
+    l'import (voir handleFileChange dans LabelsView.tsx)."""
+    sources = sorted(
+        f for f in os.listdir(source_dir) if f.lower().endswith(".pdf")
+    )
+    if not sources:
+        print(f"Aucun fichier .pdf trouvé dans {source_dir}/")
+        return
+
+    print(f"{len(sources)} fichier(s) trouvé(s) dans {source_dir}/\n")
+    ok, failed = [], []
+    for fname in sources:
+        reference = os.path.splitext(fname)[0]
+        path = os.path.join(source_dir, fname)
+        print(f"── {fname}  ->  référence « {reference} » ──")
+        try:
+            build_label(path, reference, pdf_out_dir, jpg_out_dir, dpi)
+            ok.append(reference)
+        except Exception as e:
+            print(f"  ÉCHEC : {e}")
+            failed.append((reference, str(e)))
+        print()
+
+    print("─" * 50)
+    print(f"Terminé : {len(ok)} réussite(s), {len(failed)} échec(s).")
+    if ok:
+        print("Réussi  :", ", ".join(ok))
+    if failed:
+        print("Échoué  :")
+        for ref, err in failed:
+            print(f"  - {ref} : {err}")
+
+
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
-        print("Usage: python build_label.py source.pdf REFERENCE")
+    if len(sys.argv) == 2:
+        # Mode lot : python build_label.py source_dir/
+        build_batch(sys.argv[1])
+    elif len(sys.argv) == 3:
+        # Mode unitaire : python build_label.py source.pdf REFERENCE
+        build_label(sys.argv[1], sys.argv[2])
+    else:
+        print(
+            "Usage:\n"
+            "  Un seul fichier : python build_label.py source.pdf REFERENCE\n"
+            "  Un dossier entier (lot) : python build_label.py source_dir/\n"
+            "     -> chaque fichier NOM.pdf du dossier devient la référence NOM"
+        )
         sys.exit(1)
-    build_label(sys.argv[1], sys.argv[2])
