@@ -25,8 +25,20 @@ const getLabelImageCandidates = (label: LabelItem): string[] => {
 const getLabelPdfCandidate = (label: LabelItem): string =>
   `${import.meta.env.BASE_URL}labels-pdf/${label.reference}.pdf`;
 
+type TrimBox = { x: number; y: number; width: number; height: number };
+
 type EmbeddedLabel =
-  | { kind: 'pdf'; source: Awaited<ReturnType<PDFDocument['embedPdf']>>[number]; width: number; height: number }
+  | {
+      kind: 'pdf';
+      source: Awaited<ReturnType<PDFDocument['embedPdf']>>[number];
+      width: number;
+      height: number;
+      // Zone de coupe réelle de l'étiquette à l'intérieur de la page source
+      // (peut être plus petite que la page si celle-ci inclut une marge de
+      // fond perdu et des traits de coupe pour l'imprimerie). Absent = la
+      // page entière fait office de zone de coupe.
+      trimBox?: TrimBox;
+    }
   | { kind: 'jpg'; source: Awaited<ReturnType<PDFDocument['embedJpg']>>; width: number; height: number };
 
 // Essaie d'abord la version PDF vectorielle de l'étiquette (qualité et couleurs fidèles
@@ -39,8 +51,24 @@ const embedLabel = async (pdfDoc: PDFDocument, label: LabelItem): Promise<Embedd
       const bytes = await res.arrayBuffer();
       const srcDoc = await PDFDocument.load(bytes);
       if (srcDoc.getPageCount() > 0) {
+        const srcPage = srcDoc.getPage(0);
+        // La page source contient une marge de fond perdu et des traits de
+        // coupe pour l'imprimerie : sa MediaBox (ex. 3" x 4,25") est plus
+        // grande que la taille réelle de l'étiquette une fois coupée,
+        // définie par sa TrimBox (ex. 2" x 3,25"). On intègre la page
+        // complète (marge + traits de coupe conservés pour le massicot),
+        // mais le ratio d'ajustement et le centrage plus bas se basent sur
+        // la TrimBox pour que la zone de coupe finale fasse exactement
+        // 2" x 3,25", peu importe la taille de la marge autour.
         const [embedded] = await pdfDoc.embedPdf(srcDoc, [0]);
-        return { kind: 'pdf', source: embedded, width: embedded.width, height: embedded.height };
+        const tb = srcPage.getTrimBox();
+        return {
+          kind: 'pdf',
+          source: embedded,
+          width: embedded.width,
+          height: embedded.height,
+          trimBox: { x: tb.x, y: tb.y, width: tb.width, height: tb.height },
+        };
       }
     }
   } catch {
@@ -145,12 +173,30 @@ export const generatePrinterPDF = async (labels: LabelItem[], stores: StoreItem[
       continue;
     }
 
-    // L'étiquette est contenue dans le format cible et centrée sur la page.
-    const ratio = Math.min(LABEL_WIDTH_PT / embedded.width, LABEL_HEIGHT_PT / embedded.height);
+    // Le ratio d'ajustement se base sur la TrimBox (la taille réelle une fois
+    // coupée) quand elle est disponible, pas sur la page entière — sinon la
+    // marge de fond perdu serait comptée dans le calcul et l'étiquette
+    // rétrécirait en trop. Repli sur les dimensions de la page si l'étiquette
+    // (PDF ou JPEG) n'a pas de TrimBox distincte.
+    const trimBox = embedded.kind === 'pdf' ? embedded.trimBox : undefined;
+    const refWidth = trimBox?.width ?? embedded.width;
+    const refHeight = trimBox?.height ?? embedded.height;
+    const ratio = Math.min(LABEL_WIDTH_PT / refWidth, LABEL_HEIGHT_PT / refHeight);
     const w = embedded.width * ratio;
     const h = embedded.height * ratio;
-    const x = (PAGE_WIDTH - w) / 2;
-    const y = (PAGE_HEIGHT - h) / 2;
+
+    // On centre la TrimBox sur la page (pas le coin de la page entière),
+    // pour que la marge de fond perdu et les traits de coupe restent
+    // répartis également autour de l'étiquette et exploitables au massicot.
+    let x: number;
+    let y: number;
+    if (trimBox) {
+      x = PAGE_WIDTH / 2 - (trimBox.x + trimBox.width / 2) * ratio;
+      y = PAGE_HEIGHT / 2 - (trimBox.y + trimBox.height / 2) * ratio;
+    } else {
+      x = (PAGE_WIDTH - w) / 2;
+      y = (PAGE_HEIGHT - h) / 2;
+    }
 
     for (let i = 0; i < qty; i++) {
       const page = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
