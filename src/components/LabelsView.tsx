@@ -1,6 +1,6 @@
 import React, { useRef, useState, useMemo } from 'react';
 import { useAppStore, LabelItem } from '../store/store';
-import { Upload, Search, Loader2, CheckSquare, Square, Trash2, Printer } from 'lucide-react';
+import { Upload, Search, Loader2, CheckSquare, Square, Trash2, Printer, Store, X } from 'lucide-react';
 import { StoreAssignPopover } from './StoreAssignPopover';
 import { BatchStoreAssignPopover } from './BatchStoreAssignPopover';
 import { generatePrinterPDF } from '../utils/printerExport';
@@ -11,6 +11,7 @@ export const LabelsView: React.FC = () => {
 
   const [isProcessing, setIsProcessing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [storeFilter, setStoreFilter] = useState('');
   const [selectedLabelIds, setSelectedLabelIds] = useState<string[]>([]);
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
 
@@ -49,15 +50,17 @@ export const LabelsView: React.FC = () => {
     }
   };
 
-  // Filtrage instantané par référence
+  // Filtrage instantané par référence et/ou par magasin affecté
   const filteredLabels = useMemo(() => {
-    if (!searchQuery.trim()) return labels;
-
     const query = searchQuery.toLowerCase().trim();
-    return labels.filter((label) =>
-      label.reference.toLowerCase().includes(query)
-    );
-  }, [labels, searchQuery]);
+    return labels.filter((label) => {
+      if (storeFilter && !label.stores.includes(storeFilter)) return false;
+      if (query && !label.reference.toLowerCase().includes(query)) return false;
+      return true;
+    });
+  }, [labels, searchQuery, storeFilter]);
+
+  const storeFilterName = storeFilter ? stores.find((s) => s.id === storeFilter)?.name : null;
 
   // Sélection multiple
   const toggleSelectAll = () => {
@@ -106,16 +109,43 @@ export const LabelsView: React.FC = () => {
       />
 
       {/* Header */}
-      <header className="h-16 bg-white border-b flex items-center justify-between px-6 shadow-xs flex-shrink-0">
-        <div className="relative w-96">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Recherche instantanée par référence..."
-            className="w-full pl-10 pr-4 py-2 bg-gray-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 transition text-sm"
-          />
+      <header className="h-16 bg-white border-b flex items-center justify-between px-6 shadow-xs flex-shrink-0 gap-4">
+        <div className="flex items-center gap-3 flex-1 min-w-0">
+          <div className="relative w-96">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Recherche instantanée par référence..."
+              className="w-full pl-10 pr-4 py-2 bg-gray-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 transition text-sm"
+            />
+          </div>
+
+          <div className="relative">
+            <Store className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+            <select
+              value={storeFilter}
+              onChange={(e) => setStoreFilter(e.target.value)}
+              className="pl-9 pr-8 py-2 bg-gray-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 transition text-sm appearance-none max-w-[220px]"
+            >
+              <option value="">Tous les magasins</option>
+              {stores.map((store) => (
+                <option key={store.id} value={store.id}>
+                  {store.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {storeFilterName && (
+            <span className="flex items-center gap-1.5 bg-orange-50 text-orange-700 text-xs font-medium px-2.5 py-1.5 rounded-lg whitespace-nowrap">
+              {filteredLabels.length} étiquette(s) pour « {storeFilterName} »
+              <button onClick={() => setStoreFilter('')} className="hover:text-orange-900" title="Retirer le filtre">
+                <X size={13} />
+              </button>
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-3">
@@ -216,6 +246,15 @@ export const LabelsView: React.FC = () => {
             </div>
             <p className="text-lg font-semibold text-gray-700">Glissez-déposez vos étiquettes (JPG/PNG) ou PDF ici</p>
             <p className="text-sm text-gray-400 mt-1">Cliquez pour parcourir (Nom de fichier = Référence automatique)</p>
+          </div>
+        ) : filteredLabels.length === 0 ? (
+          <div className="bg-white rounded-xl shadow-xs border border-gray-200 p-16 flex flex-col items-center justify-center text-gray-400">
+            <Store size={32} className="mb-3 text-gray-300" />
+            <p className="text-base font-medium text-gray-600">
+              {storeFilterName
+                ? `Aucune étiquette affectée à « ${storeFilterName} ».`
+                : 'Aucune étiquette ne correspond à cette recherche.'}
+            </p>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
