@@ -64,7 +64,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
             alt="Interbois"
             className="h-10 w-auto object-contain mx-auto mb-8 bg-slate-900 rounded-lg p-3"
           />
-          <h1 className="text-xl font-bold text-slate-900 mb-8">Gestion des étiquettes</h1>
+          <h1 className="text-xl font-bold text-slate-900 mb-8">Application de commande d'étiquettes</h1>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
             <button
@@ -74,7 +74,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
               <div className="p-3 rounded-full bg-orange-50 text-orange-500">
                 <Users size={28} />
               </div>
-              <span className="font-semibold">Équipe interne</span>
+              <span className="font-semibold">Marketing</span>
               <span className="text-xs text-gray-400">Gestion des étiquettes et des magasins</span>
             </button>
 
