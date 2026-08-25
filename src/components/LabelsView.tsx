@@ -1,6 +1,6 @@
-import React, { useRef, useState, useMemo } from 'react';
+import React, { useRef, useState, useMemo, useEffect } from 'react';
 import { useAppStore, LabelItem } from '../store/store';
-import { Upload, Search, Loader2, CheckSquare, Square, Trash2, Printer, Store, X } from 'lucide-react';
+import { Upload, Search, Loader2, CheckSquare, Square, Trash2, Printer, Store, X, ChevronDown } from 'lucide-react';
 import { StoreAssignPopover } from './StoreAssignPopover';
 import { BatchStoreAssignPopover } from './BatchStoreAssignPopover';
 import { generatePrinterPDF } from '../utils/printerExport';
@@ -12,8 +12,22 @@ export const LabelsView: React.FC = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [storeFilter, setStoreFilter] = useState('');
+  const [isStoreDropdownOpen, setIsStoreDropdownOpen] = useState(false);
+  const [storeDropdownSearch, setStoreDropdownSearch] = useState('');
+  const storeDropdownRef = useRef<HTMLDivElement>(null);
   const [selectedLabelIds, setSelectedLabelIds] = useState<string[]>([]);
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
+
+  // Fermer le menu déroulant du filtre magasin si clic à l'extérieur
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (storeDropdownRef.current && !storeDropdownRef.current.contains(e.target as Node)) {
+        setIsStoreDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const handleUploadClick = () => {
     fileInputRef.current?.click();
@@ -61,6 +75,23 @@ export const LabelsView: React.FC = () => {
   }, [labels, searchQuery, storeFilter]);
 
   const storeFilterName = storeFilter ? stores.find((s) => s.id === storeFilter)?.name : null;
+
+  // Magasins triés par ordre alphabétique, filtrés par la recherche du menu déroulant
+  const sortedStores = useMemo(
+    () => [...stores].sort((a, b) => a.name.localeCompare(b.name, 'fr', { sensitivity: 'base' })),
+    [stores]
+  );
+  const storeDropdownOptions = useMemo(() => {
+    const query = storeDropdownSearch.toLowerCase().trim();
+    if (!query) return sortedStores;
+    return sortedStores.filter((store) => store.name.toLowerCase().includes(query));
+  }, [sortedStores, storeDropdownSearch]);
+
+  const selectStoreFilter = (id: string) => {
+    setStoreFilter(id);
+    setIsStoreDropdownOpen(false);
+    setStoreDropdownSearch('');
+  };
 
   // Sélection multiple
   const toggleSelectAll = () => {
@@ -122,20 +153,64 @@ export const LabelsView: React.FC = () => {
             />
           </div>
 
-          <div className="relative">
-            <Store className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
-            <select
-              value={storeFilter}
-              onChange={(e) => setStoreFilter(e.target.value)}
-              className="pl-9 pr-8 py-2 bg-gray-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 transition text-sm appearance-none max-w-[220px]"
+          <div className="relative" ref={storeDropdownRef}>
+            <button
+              type="button"
+              onClick={() => setIsStoreDropdownOpen((v) => !v)}
+              className="flex items-center gap-2 pl-9 pr-3 py-2 bg-gray-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 transition text-sm max-w-[220px] relative"
             >
-              <option value="">Tous les magasins</option>
-              {stores.map((store) => (
-                <option key={store.id} value={store.id}>
-                  {store.name}
-                </option>
-              ))}
-            </select>
+              <Store className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+              <span className="truncate">{storeFilterName ?? 'Tous les magasins'}</span>
+              <ChevronDown size={14} className={`text-gray-400 transition-transform flex-shrink-0 ${isStoreDropdownOpen ? 'rotate-180' : ''}`} />
+            </button>
+
+            {isStoreDropdownOpen && (
+              <div className="absolute z-50 left-0 top-full mt-1 bg-white rounded-xl shadow-2xl border border-gray-200 p-3 space-y-2 w-72 max-w-[90vw]">
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" size={14} />
+                  <input
+                    type="text"
+                    value={storeDropdownSearch}
+                    onChange={(e) => setStoreDropdownSearch(e.target.value)}
+                    placeholder="Rechercher un magasin..."
+                    className="w-full pl-8 pr-7 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-orange-500"
+                    autoFocus
+                  />
+                  {storeDropdownSearch && (
+                    <button
+                      onClick={() => setStoreDropdownSearch('')}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    >
+                      <X size={12} />
+                    </button>
+                  )}
+                </div>
+
+                <div className="max-h-64 overflow-y-auto space-y-0.5">
+                  <button
+                    type="button"
+                    onClick={() => selectStoreFilter('')}
+                    className={`w-full text-left px-2 py-1.5 rounded text-xs transition ${!storeFilter ? 'bg-orange-50 text-orange-900 font-medium' : 'hover:bg-gray-50 text-gray-700'}`}
+                  >
+                    Tous les magasins
+                  </button>
+                  {storeDropdownOptions.length === 0 ? (
+                    <p className="text-xs text-gray-400 text-center py-2">Aucun magasin trouvé</p>
+                  ) : (
+                    storeDropdownOptions.map((store) => (
+                      <button
+                        key={store.id}
+                        type="button"
+                        onClick={() => selectStoreFilter(store.id)}
+                        className={`w-full text-left px-2 py-1.5 rounded text-xs truncate transition ${storeFilter === store.id ? 'bg-orange-50 text-orange-900 font-medium' : 'hover:bg-gray-50 text-gray-700'}`}
+                      >
+                        {store.name}
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           {storeFilterName && (
