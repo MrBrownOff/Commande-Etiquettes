@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut, User } from 'firebase/auth';
 import { auth } from '../firebase';
-import { Loader2, Lock } from 'lucide-react';
+import { ArrowLeft, Loader2, Lock, Printer, Users } from 'lucide-react';
 
 export const signOutUser = () => signOut(auth);
 
@@ -9,10 +9,21 @@ interface AuthGateProps {
   children: React.ReactNode;
 }
 
+type Portal = 'interne' | 'representant';
+
+// Les deux portails mènent au même formulaire de connexion : c'est l'email du
+// compte utilisé qui détermine la vue affichée une fois connecté (voir App.tsx).
+// Le choix ici ne sert qu'à orienter l'utilisateur et adapter le texte affiché.
+const PORTAL_LABELS: Record<Portal, string> = {
+  interne: 'Équipe interne',
+  representant: 'Représentants',
+};
+
 // N'affiche l'application que pour un utilisateur authentifié via Firebase Auth ;
-// affiche un écran de connexion (email/mot de passe) sinon.
+// affiche un écran d'accueil puis de connexion (email/mot de passe) sinon.
 export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
   const [user, setUser] = useState<User | null | undefined>(undefined); // undefined = chargement initial
+  const [portal, setPortal] = useState<Portal | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -44,16 +55,67 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
     );
   }
 
-  if (user === null) {
+  if (user === null && portal === null) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-gray-50 px-4">
+        <div className="w-full max-w-2xl text-center">
+          <img
+            src={`${import.meta.env.BASE_URL}Interbois-Logo-Blanc.png`}
+            alt="Interbois"
+            className="h-10 w-auto object-contain mx-auto mb-8 bg-slate-900 rounded-lg p-3"
+          />
+          <h1 className="text-xl font-bold text-slate-900 mb-8">Gestion des étiquettes</h1>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+            <button
+              onClick={() => setPortal('interne')}
+              className="bg-white p-8 rounded-xl shadow-lg border border-gray-200 hover:border-orange-400 hover:shadow-xl transition flex flex-col items-center gap-3 text-slate-900"
+            >
+              <div className="p-3 rounded-full bg-orange-50 text-orange-500">
+                <Users size={28} />
+              </div>
+              <span className="font-semibold">Équipe interne</span>
+              <span className="text-xs text-gray-400">Gestion des étiquettes et des magasins</span>
+            </button>
+
+            <button
+              onClick={() => setPortal('representant')}
+              className="bg-white p-8 rounded-xl shadow-lg border border-gray-200 hover:border-orange-400 hover:shadow-xl transition flex flex-col items-center gap-3 text-slate-900"
+            >
+              <div className="p-3 rounded-full bg-orange-50 text-orange-500">
+                <Printer size={28} />
+              </div>
+              <span className="font-semibold">Représentants</span>
+              <span className="text-xs text-gray-400">Sélection d'étiquettes à imprimer</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (user === null && portal !== null) {
     return (
       <div className="h-screen flex items-center justify-center bg-gray-50 px-4">
         <form
           onSubmit={handleSubmit}
           className="bg-white p-8 rounded-xl shadow-lg border border-gray-200 w-full max-w-sm space-y-4"
         >
+          <button
+            type="button"
+            onClick={() => {
+              setPortal(null);
+              setError(null);
+            }}
+            className="flex items-center gap-1.5 text-xs font-medium text-gray-400 hover:text-gray-600 transition -mb-1"
+          >
+            <ArrowLeft size={14} />
+            Retour
+          </button>
+
           <div className="flex items-center gap-2 justify-center text-slate-900 mb-2">
             <Lock size={22} />
-            <h1 className="text-lg font-bold">Connexion</h1>
+            <h1 className="text-lg font-bold">Connexion — {PORTAL_LABELS[portal]}</h1>
           </div>
 
           {error && <p className="text-sm text-red-600 text-center">{error}</p>}
