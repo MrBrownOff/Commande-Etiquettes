@@ -1,27 +1,38 @@
 import React, { useMemo, useState } from 'react';
 import { useAppStore } from '../store/store';
-import { Search, Loader2, CheckSquare, Square, Printer, LogOut, Tag, Flag } from 'lucide-react';
+import { Search, Loader2, CheckSquare, Square, Printer, LogOut, Tag, Flag, Bookmark } from 'lucide-react';
 import { generatePrinterPDF, PrintableKind } from '../utils/printerExport';
 import { signOutUser } from './AuthGate';
 
 const TYPE_TABS: { type: PrintableKind; label: string; icon: typeof Tag }[] = [
   { type: 'labels', label: 'Étiquettes', icon: Tag },
-  { type: 'fanions', label: 'Fanions', icon: Flag },
+  { type: 'propack', label: 'Pro-Pack', icon: Flag },
+  { type: 'fanions', label: 'Fanions', icon: Bookmark },
 ];
 
-// Vue allégée destinée aux représentants : ils choisissent des étiquettes ou des fanions
-// à imprimer dans le même catalogue partagé que l'équipe interne, sans avoir accès à la
-// gestion des magasins ni à l'import/suppression d'items (réservés à l'équipe interne).
-// Les deux catégories fonctionnent indépendamment l'une de l'autre (données, sélection,
-// recherche propres à chacune).
+const TYPE_META: Record<PrintableKind, { imgFolder: string; singular: string; elisionE: string }> = {
+  labels: { imgFolder: 'labels', singular: 'étiquette', elisionE: 'e' },
+  propack: { imgFolder: 'pro-pack', singular: 'Pro-Pack', elisionE: '' },
+  fanions: { imgFolder: 'fanions', singular: 'fanion', elisionE: '' },
+};
+
+// Vue allégée destinée aux représentants : ils choisissent des étiquettes, des items
+// Pro-Pack, ou des fanions à imprimer dans le même catalogue partagé que l'équipe
+// interne, sans avoir accès à la gestion des magasins ni à l'import/suppression
+// d'items (réservés à l'équipe interne). Les trois catégories fonctionnent
+// indépendamment l'une de l'autre (données, sélection, recherche propres à chacune).
 export const RepresentantView: React.FC = () => {
   const store = useAppStore();
   const [activeType, setActiveType] = useState<PrintableKind>('labels');
-  const items = activeType === 'fanions' ? store.fanions : store.labels;
-  const updateItem = activeType === 'fanions' ? store.updateFanion : store.updateLabel;
-  const logRun = activeType === 'fanions' ? store.logFanionPrintRun : store.logPrintRun;
-  const imgFolder = activeType;
-  const singular = activeType === 'fanions' ? 'fanion' : 'étiquette';
+
+  const ITEMS_BY_TYPE = { labels: store.labels, propack: store.proPack, fanions: store.fanions };
+  const UPDATE_BY_TYPE = { labels: store.updateLabel, propack: store.updateProPackItem, fanions: store.updateFanionsItem };
+  const LOG_RUN_BY_TYPE = { labels: store.logPrintRun, propack: store.logProPackPrintRun, fanions: store.logFanionsPrintRun };
+
+  const items = ITEMS_BY_TYPE[activeType];
+  const updateItem = UPDATE_BY_TYPE[activeType];
+  const logRun = LOG_RUN_BY_TYPE[activeType];
+  const { imgFolder, singular, elisionE } = TYPE_META[activeType];
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedItemIds, setSelectedItemIds] = useState<string[]>([]);
@@ -153,8 +164,8 @@ export const RepresentantView: React.FC = () => {
             <Search size={32} className="mb-3 text-gray-300" />
             <p className="text-base font-medium text-gray-600">
               {items.length === 0
-                ? `Aucun${activeType === 'fanions' ? '' : 'e'} ${singular} disponible pour le moment.`
-                : `Aucun${activeType === 'fanions' ? '' : 'e'} ${singular} ne correspond à cette recherche.`}
+                ? `Aucun${elisionE} ${singular} disponible pour le moment.`
+                : `Aucun${elisionE} ${singular} ne correspond à cette recherche.`}
             </p>
           </div>
         ) : (

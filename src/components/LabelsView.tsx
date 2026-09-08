@@ -6,31 +6,92 @@ import { BatchStoreAssignPopover } from './BatchStoreAssignPopover';
 import { generatePrinterPDF, PrintableKind } from '../utils/printerExport';
 
 interface LabelsViewProps {
-  // Catégorie d'items gérée par cette instance de la vue : "labels" (étiquettes) ou
-  // "fanions". Les deux catégories partagent exactement le même composant/comportement,
-  // mais opèrent sur des collections Firestore, dossiers d'assets et historiques
-  // d'impression totalement indépendants (voir store.ts et printerExport.ts).
+  // Catégorie d'items gérée par cette instance de la vue : "labels" (étiquettes),
+  // "propack" (Pro-Pack) ou "fanions" (Fanions). Les trois catégories partagent
+  // exactement le même composant/comportement, mais opèrent sur des collections
+  // Firestore, dossiers d'assets et historiques d'impression totalement
+  // indépendants (voir store.ts et printerExport.ts).
   itemType?: PrintableKind;
 }
 
-const TYPE_TEXT: Record<PrintableKind, { singular: string; plural: string; pluralCapitalized: string; folder: string }> = {
-  labels: { singular: 'étiquette', plural: 'étiquettes', pluralCapitalized: 'Étiquettes', folder: 'labels' },
-  fanions: { singular: 'fanion', plural: 'fanions', pluralCapitalized: 'Fanions', folder: 'fanions' },
+const TYPE_TEXT: Record<
+  PrintableKind,
+  { singular: string; plural: string; pluralCapitalized: string; folder: string; elisionE: string; deleteTitle: string }
+> = {
+  labels: {
+    singular: 'étiquette',
+    plural: 'étiquettes',
+    pluralCapitalized: 'Étiquettes',
+    folder: 'labels',
+    elisionE: 'e',
+    deleteTitle: "Supprimer l'étiquette",
+  },
+  propack: {
+    singular: 'Pro-Pack',
+    plural: 'Pro-Pack',
+    pluralCapitalized: 'Pro-Pack',
+    folder: 'pro-pack',
+    elisionE: '',
+    deleteTitle: 'Supprimer le Pro-Pack',
+  },
+  fanions: {
+    singular: 'fanion',
+    plural: 'fanions',
+    pluralCapitalized: 'Fanions',
+    folder: 'fanions',
+    elisionE: '',
+    deleteTitle: 'Supprimer le fanion',
+  },
 };
 
 export const LabelsView: React.FC<LabelsViewProps> = ({ itemType = 'labels' }) => {
   const store = useAppStore();
   const text = TYPE_TEXT[itemType];
 
-  const items = itemType === 'fanions' ? store.fanions : store.labels;
+  const ACTIONS = {
+    labels: {
+      items: store.labels,
+      addItemsBatch: store.addLabelsBatch,
+      updateItem: store.updateLabel,
+      deleteItem: store.deleteLabel,
+      clearItems: store.clearLabels,
+      assignStoresToItems: store.assignStoresToLabels,
+      removeStoresFromItems: store.removeStoresFromLabels,
+      logRun: store.logPrintRun,
+    },
+    propack: {
+      items: store.proPack,
+      addItemsBatch: store.addProPackBatch,
+      updateItem: store.updateProPackItem,
+      deleteItem: store.deleteProPackItem,
+      clearItems: store.clearProPack,
+      assignStoresToItems: store.assignStoresToProPack,
+      removeStoresFromItems: store.removeStoresFromProPack,
+      logRun: store.logProPackPrintRun,
+    },
+    fanions: {
+      items: store.fanions,
+      addItemsBatch: store.addFanionsBatch,
+      updateItem: store.updateFanionsItem,
+      deleteItem: store.deleteFanionsItem,
+      clearItems: store.clearFanions,
+      assignStoresToItems: store.assignStoresToFanions,
+      removeStoresFromItems: store.removeStoresFromFanions,
+      logRun: store.logFanionsPrintRun,
+    },
+  };
+
   const { stores } = store;
-  const addItemsBatch = itemType === 'fanions' ? store.addFanionsBatch : store.addLabelsBatch;
-  const updateItem = itemType === 'fanions' ? store.updateFanion : store.updateLabel;
-  const deleteItem = itemType === 'fanions' ? store.deleteFanion : store.deleteLabel;
-  const clearItems = itemType === 'fanions' ? store.clearFanions : store.clearLabels;
-  const assignStoresToItems = itemType === 'fanions' ? store.assignStoresToFanions : store.assignStoresToLabels;
-  const removeStoresFromItems = itemType === 'fanions' ? store.removeStoresFromFanions : store.removeStoresFromLabels;
-  const logRun = itemType === 'fanions' ? store.logFanionPrintRun : store.logPrintRun;
+  const {
+    items,
+    addItemsBatch,
+    updateItem,
+    deleteItem,
+    clearItems,
+    assignStoresToItems,
+    removeStoresFromItems,
+    logRun,
+  } = ACTIONS[itemType];
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -44,8 +105,8 @@ export const LabelsView: React.FC<LabelsViewProps> = ({ itemType = 'labels' }) =
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
 
   // Réinitialise la sélection et les filtres locaux en changeant de catégorie
-  // (ex. onglet Étiquettes -> Fanions), pour éviter qu'une sélection d'étiquettes
-  // ne se retrouve appliquée par erreur à des fanions.
+  // (ex. onglet Étiquettes -> Pro-Pack), pour éviter qu'une sélection d'étiquettes
+  // ne se retrouve appliquée par erreur à des items Pro-Pack.
   useEffect(() => {
     setSelectedItemIds([]);
     setSearchQuery('');
@@ -365,8 +426,8 @@ export const LabelsView: React.FC<LabelsViewProps> = ({ itemType = 'labels' }) =
             <Store size={32} className="mb-3 text-gray-300" />
             <p className="text-base font-medium text-gray-600">
               {storeFilterName
-                ? `Aucun${itemType === 'fanions' ? '' : 'e'} ${text.singular} affecté${itemType === 'fanions' ? '' : 'e'} à « ${storeFilterName} ».`
-                : `Aucun${itemType === 'fanions' ? '' : 'e'} ${text.singular} ne correspond à cette recherche.`}
+                ? `Aucun${text.elisionE} ${text.singular} affecté${text.elisionE} à « ${storeFilterName} ».`
+                : `Aucun${text.elisionE} ${text.singular} ne correspond à cette recherche.`}
             </p>
           </div>
         ) : (
@@ -485,7 +546,7 @@ export const LabelsView: React.FC<LabelsViewProps> = ({ itemType = 'labels' }) =
                       <button
                         onClick={() => deleteItem(item.id)}
                         className="text-gray-400 hover:text-red-500 transition p-1"
-                        title={itemType === 'fanions' ? 'Supprimer le fanion' : "Supprimer l'étiquette"}
+                        title={text.deleteTitle}
                       >
                         <Trash2 size={16} />
                       </button>

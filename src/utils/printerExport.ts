@@ -6,14 +6,25 @@ const PAGE_WIDTH = 595.28; // A4 en points (210mm)
 const PAGE_HEIGHT = 841.89; // A4 en points (297mm)
 const MARGIN_MM = 15;
 
-export type PrintableKind = 'labels' | 'fanions';
+export type PrintableKind = 'labels' | 'propack' | 'fanions';
 
 // Chaque catégorie a son propre dossier d'assets et son propre format d'impression
 // cible : l'item n'est jamais agrandi au-delà de cette taille — il y est simplement
 // contenu, ce qui garantit une résolution d'impression élevée quelle que soit la source.
+// `elisionE` porte le "e" d'accord féminin à utiliser après "Aucun(e)" (ex: "e" pour
+// "étiquette", "" pour "Pro-Pack"/"fanion" qui ne le prennent pas).
 const KIND_CONFIG: Record<
   PrintableKind,
-  { pdfFolder: string; imgFolder: string; widthIn: number; heightIn: number; coverTitle: string; fileSlug: string; noun: string }
+  {
+    pdfFolder: string;
+    imgFolder: string;
+    widthIn: number;
+    heightIn: number;
+    coverTitle: string;
+    fileSlug: string;
+    noun: string;
+    elisionE: string;
+  }
 > = {
   labels: {
     pdfFolder: 'labels-pdf',
@@ -23,15 +34,27 @@ const KIND_CONFIG: Record<
     coverTitle: 'Bon de commande — Étiquettes',
     fileSlug: 'etiquettes',
     noun: 'étiquette',
+    elisionE: 'e',
+  },
+  propack: {
+    pdfFolder: 'pro-pack-pdf',
+    imgFolder: 'pro-pack',
+    widthIn: 8.5,
+    heightIn: 3.25,
+    coverTitle: 'Bon de commande — Pro-Pack',
+    fileSlug: 'pro-pack',
+    noun: 'Pro-Pack',
+    elisionE: '',
   },
   fanions: {
     pdfFolder: 'fanions-pdf',
     imgFolder: 'fanions',
-    widthIn: 8.5,
-    heightIn: 3.25,
+    widthIn: 9,
+    heightIn: 29,
     coverTitle: 'Bon de commande — Fanions',
     fileSlug: 'fanions',
     noun: 'fanion',
+    elisionE: '',
   },
 };
 
@@ -118,7 +141,7 @@ const embedItem = async (
 };
 
 // Génère un PDF prêt pour l'imprimeur : une page de garde récapitulative,
-// suivie d'une page par exemplaire commandé de chaque item (étiquette ou fanion).
+// suivie d'une page par exemplaire commandé de chaque item (étiquette ou Pro-Pack).
 export const generatePrinterPDF = async (items: LabelItem[], stores: StoreItem[], kind: PrintableKind = 'labels') => {
   const config = KIND_CONFIG[kind];
   const itemWidthPt = config.widthIn * 72;
@@ -126,8 +149,14 @@ export const generatePrinterPDF = async (items: LabelItem[], stores: StoreItem[]
 
   const orderedItems = items.filter((l) => (l.quantity ?? 0) > 0);
   if (orderedItems.length === 0) {
-    throw new Error(`Aucun${kind === 'fanions' ? '' : 'e'} ${config.noun} n'a de quantité renseignée.`);
+    throw new Error(`Aucun${config.elisionE} ${config.noun} n'a de quantité renseignée.`);
   }
+
+  // Les pages d'items doivent pouvoir accueillir des formats plus grands qu'une
+  // feuille A4 (ex: fanions grand format 9x29po) : on ne réduit jamais en dessous
+  // du format cible réel de la catégorie, sous peine de rogner le visuel imprimé.
+  const itemPageWidth = Math.max(PAGE_WIDTH, itemWidthPt);
+  const itemPageHeight = Math.max(PAGE_HEIGHT, itemHeightPt);
 
   const pdfDoc = await PDFDocument.create();
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -222,15 +251,15 @@ export const generatePrinterPDF = async (items: LabelItem[], stores: StoreItem[]
     let x: number;
     let y: number;
     if (trimBox) {
-      x = PAGE_WIDTH / 2 - (trimBox.x + trimBox.width / 2) * ratio;
-      y = PAGE_HEIGHT / 2 - (trimBox.y + trimBox.height / 2) * ratio;
+      x = itemPageWidth / 2 - (trimBox.x + trimBox.width / 2) * ratio;
+      y = itemPageHeight / 2 - (trimBox.y + trimBox.height / 2) * ratio;
     } else {
-      x = (PAGE_WIDTH - w) / 2;
-      y = (PAGE_HEIGHT - h) / 2;
+      x = (itemPageWidth - w) / 2;
+      y = (itemPageHeight - h) / 2;
     }
 
     for (let i = 0; i < qty; i++) {
-      const page = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+      const page = pdfDoc.addPage([itemPageWidth, itemPageHeight]);
       if (embedded.kind === 'pdf') {
         page.drawPage(embedded.source, { x, y, width: w, height: h });
       } else {

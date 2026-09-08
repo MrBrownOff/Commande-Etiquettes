@@ -9,22 +9,28 @@ import { PrintHistoryList } from './PrintHistoryList';
 export const ProjectView: React.FC = () => {
   const {
     labels,
+    proPack,
     fanions,
     stores,
     printHistory,
-    fanionPrintHistory,
+    proPackPrintHistory,
+    fanionsPrintHistory,
     exportProject,
     importProject,
     logPrintRun,
-    logFanionPrintRun,
+    logProPackPrintRun,
+    logFanionsPrintRun,
   } = useAppStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
-  const [isGeneratingFanionPDF, setIsGeneratingFanionPDF] = useState(false);
+  const [isGeneratingProPackPDF, setIsGeneratingProPackPDF] = useState(false);
+  const [isGeneratingFanionsPDF, setIsGeneratingFanionsPDF] = useState(false);
 
   const labelsWithQuantity = labels.filter((l) => (l.quantity ?? 0) > 0);
   const totalToPrint = labelsWithQuantity.reduce((sum, l) => sum + (l.quantity ?? 0), 0);
+  const proPackWithQuantity = proPack.filter((f) => (f.quantity ?? 0) > 0);
+  const totalProPackToPrint = proPackWithQuantity.reduce((sum, f) => sum + (f.quantity ?? 0), 0);
   const fanionsWithQuantity = fanions.filter((f) => (f.quantity ?? 0) > 0);
   const totalFanionsToPrint = fanionsWithQuantity.reduce((sum, f) => sum + (f.quantity ?? 0), 0);
 
@@ -65,12 +71,30 @@ export const ProjectView: React.FC = () => {
     }
   };
 
-  // Génération du PDF prêt pour l'imprimeur pour les fanions (indépendant des étiquettes)
-  const handleGenerateFanionPrinterPDF = async () => {
-    setIsGeneratingFanionPDF(true);
+  // Génération du PDF prêt pour l'imprimeur pour le Pro-Pack (indépendant des étiquettes)
+  const handleGenerateProPackPrinterPDF = async () => {
+    setIsGeneratingProPackPDF(true);
+    try {
+      const { missingLabels, summary } = await generatePrinterPDF(proPack, stores, 'propack');
+      await logProPackPrintRun(summary);
+      if (missingLabels.length > 0) {
+        alert(
+          `Le PDF a été généré, mais l'image de ${missingLabels.length} Pro-Pack était introuvable et a été omise : ${missingLabels.join(', ')}`
+        );
+      }
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Impossible de générer le PDF.');
+    } finally {
+      setIsGeneratingProPackPDF(false);
+    }
+  };
+
+  // Génération du PDF prêt pour l'imprimeur pour les Fanions (indépendant des étiquettes et du Pro-Pack)
+  const handleGenerateFanionsPrinterPDF = async () => {
+    setIsGeneratingFanionsPDF(true);
     try {
       const { missingLabels, summary } = await generatePrinterPDF(fanions, stores, 'fanions');
-      await logFanionPrintRun(summary);
+      await logFanionsPrintRun(summary);
       if (missingLabels.length > 0) {
         alert(
           `Le PDF a été généré, mais l'image de ${missingLabels.length} fanion(s) était introuvable et a été omise : ${missingLabels.join(', ')}`
@@ -79,7 +103,7 @@ export const ProjectView: React.FC = () => {
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Impossible de générer le PDF.');
     } finally {
-      setIsGeneratingFanionPDF(false);
+      setIsGeneratingFanionsPDF(false);
     }
   };
 
@@ -89,6 +113,14 @@ export const ProjectView: React.FC = () => {
     const link = document.createElement('a');
     link.href = csvUrl;
     link.download = `affectations_magasins_${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+  };
+
+  const handleExportProPackCSV = () => {
+    const { csvUrl } = generateExports(proPack, stores);
+    const link = document.createElement('a');
+    link.href = csvUrl;
+    link.download = `affectations_magasins_pro-pack_${new Date().toISOString().slice(0, 10)}.csv`;
     link.click();
   };
 
@@ -126,7 +158,7 @@ export const ProjectView: React.FC = () => {
             <Download size={18} className="text-orange-500" /> Sauvegarde (.JSON)
           </h2>
           <p className="text-xs text-gray-500">
-            Télécharge un fichier JSON contenant la liste exacte de vos étiquettes, fanions et magasins pour reprendre votre travail plus tard sans rien perdre.
+            Télécharge un fichier JSON contenant la liste exacte de vos étiquettes, Pro-Pack et magasins pour reprendre votre travail plus tard sans rien perdre.
           </p>
           <button
             onClick={exportProject}
@@ -205,10 +237,62 @@ export const ProjectView: React.FC = () => {
       <div className="pt-4 border-t border-gray-200">
         <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
           <Flag className="text-orange-500" size={22} />
-          Fanions
+          Pro-Pack
         </h2>
         <p className="text-sm text-gray-500 mt-1">
           Catalogue indépendant des étiquettes : sa propre sauvegarde, son propre bon d'impression et son propre historique.
+        </p>
+      </div>
+
+      {/* Export métier final — Pro-Pack */}
+      <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-xs space-y-4">
+        <h2 className="text-base font-semibold text-gray-800 flex items-center gap-2">
+          <Download size={18} className="text-emerald-600" /> Export final des affectations — Pro-Pack (CSV)
+        </h2>
+        <p className="text-xs text-gray-500">
+          Générez le fichier CSV d'affectation final du Pro-Pack, prêt pour l'analyse sur Excel ou votre ERP.
+        </p>
+        <button
+          onClick={handleExportProPackCSV}
+          className="bg-emerald-600 hover:bg-emerald-700 text-white font-medium px-5 py-2.5 rounded-lg text-sm transition flex items-center gap-2"
+        >
+          <Download size={16} /> Générer le fichier CSV d'affectations
+        </button>
+      </div>
+
+      {/* Bon de commande PDF pour l'imprimeur — Pro-Pack */}
+      <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-xs space-y-4">
+        <h2 className="text-base font-semibold text-gray-800 flex items-center gap-2">
+          <Printer size={18} className="text-slate-700" /> Bon d'impression — Pro-Pack (PDF)
+        </h2>
+        <p className="text-xs text-gray-500">
+          Génère un PDF prêt pour l'imprimeur : une page de garde récapitulant le nombre total de Pro-Pack
+          et les magasins concernés, suivie des Pro-Pack en autant d'exemplaires que la quantité renseignée.
+        </p>
+        <p className="text-xs font-medium text-gray-600">
+          {proPackWithQuantity.length === 0
+            ? 'Aucune quantité renseignée pour le moment.'
+            : `${proPackWithQuantity.length} référence(s), ${totalProPackToPrint} Pro-Pack à imprimer.`}
+        </p>
+        <button
+          onClick={handleGenerateProPackPrinterPDF}
+          disabled={isGeneratingProPackPDF || proPackWithQuantity.length === 0}
+          className="bg-slate-900 hover:bg-slate-800 disabled:bg-gray-200 text-white font-medium px-5 py-2.5 rounded-lg text-sm transition flex items-center gap-2"
+        >
+          {isGeneratingProPackPDF ? <Loader2 size={16} className="animate-spin" /> : <Printer size={16} />}
+          {isGeneratingProPackPDF ? 'Génération en cours...' : "Générer le PDF pour l'imprimeur"}
+        </button>
+      </div>
+
+      <PrintHistoryList entries={proPackPrintHistory} noun="Pro-Pack" />
+
+      <div className="pt-4 border-t border-gray-200">
+        <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+          <Flag className="text-orange-500" size={22} />
+          Fanions
+        </h2>
+        <p className="text-sm text-gray-500 mt-1">
+          Catalogue indépendant des étiquettes et du Pro-Pack : sa propre sauvegarde, son propre bon d'impression et son propre historique.
         </p>
       </div>
 
@@ -243,16 +327,16 @@ export const ProjectView: React.FC = () => {
             : `${fanionsWithQuantity.length} référence(s), ${totalFanionsToPrint} fanion(s) à imprimer.`}
         </p>
         <button
-          onClick={handleGenerateFanionPrinterPDF}
-          disabled={isGeneratingFanionPDF || fanionsWithQuantity.length === 0}
+          onClick={handleGenerateFanionsPrinterPDF}
+          disabled={isGeneratingFanionsPDF || fanionsWithQuantity.length === 0}
           className="bg-slate-900 hover:bg-slate-800 disabled:bg-gray-200 text-white font-medium px-5 py-2.5 rounded-lg text-sm transition flex items-center gap-2"
         >
-          {isGeneratingFanionPDF ? <Loader2 size={16} className="animate-spin" /> : <Printer size={16} />}
-          {isGeneratingFanionPDF ? 'Génération en cours...' : "Générer le PDF pour l'imprimeur"}
+          {isGeneratingFanionsPDF ? <Loader2 size={16} className="animate-spin" /> : <Printer size={16} />}
+          {isGeneratingFanionsPDF ? 'Génération en cours...' : "Générer le PDF pour l'imprimeur"}
         </button>
       </div>
 
-      <PrintHistoryList entries={fanionPrintHistory} noun="fanion" />
+      <PrintHistoryList entries={fanionsPrintHistory} noun="fanion" />
     </div>
   );
 };
