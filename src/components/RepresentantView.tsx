@@ -6,22 +6,22 @@ import { signOutUser } from './AuthGate';
 
 const TYPE_TABS: { type: PrintableKind; label: string; icon: typeof Tag }[] = [
   { type: 'labels', label: 'Étiquettes', icon: Tag },
-  { type: 'fanions', label: 'Fanions', icon: Flag },
+  { type: 'propack', label: 'Pro-Pack', icon: Flag },
 ];
 
-// Vue allégée destinée aux représentants : ils choisissent des étiquettes ou des fanions
-// à imprimer dans le même catalogue partagé que l'équipe interne, sans avoir accès à la
-// gestion des magasins ni à l'import/suppression d'items (réservés à l'équipe interne).
-// Les deux catégories fonctionnent indépendamment l'une de l'autre (données, sélection,
-// recherche propres à chacune).
+// Vue allégée destinée aux représentants : ils choisissent des étiquettes ou des items
+// Pro-Pack à imprimer dans le même catalogue partagé que l'équipe interne, sans avoir
+// accès à la gestion des magasins ni à l'import/suppression d'items (réservés à l'équipe
+// interne). Les deux catégories fonctionnent indépendamment l'une de l'autre (données,
+// sélection, recherche propres à chacune).
 export const RepresentantView: React.FC = () => {
   const store = useAppStore();
   const [activeType, setActiveType] = useState<PrintableKind>('labels');
-  const items = activeType === 'fanions' ? store.fanions : store.labels;
-  const updateItem = activeType === 'fanions' ? store.updateFanion : store.updateLabel;
-  const logRun = activeType === 'fanions' ? store.logFanionPrintRun : store.logPrintRun;
-  const imgFolder = activeType;
-  const singular = activeType === 'fanions' ? 'fanion' : 'étiquette';
+  const items = activeType === 'propack' ? store.proPack : store.labels;
+  const updateItem = activeType === 'propack' ? store.updateProPackItem : store.updateLabel;
+  const logRun = activeType === 'propack' ? store.logProPackPrintRun : store.logPrintRun;
+  const imgFolder = activeType === 'propack' ? 'pro-pack' : 'labels';
+  const singular = activeType === 'propack' ? 'Pro-Pack' : 'étiquette';
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedItemIds, setSelectedItemIds] = useState<string[]>([]);
@@ -153,8 +153,8 @@ export const RepresentantView: React.FC = () => {
             <Search size={32} className="mb-3 text-gray-300" />
             <p className="text-base font-medium text-gray-600">
               {items.length === 0
-                ? `Aucun${activeType === 'fanions' ? '' : 'e'} ${singular} disponible pour le moment.`
-                : `Aucun${activeType === 'fanions' ? '' : 'e'} ${singular} ne correspond à cette recherche.`}
+                ? `Aucun${activeType === 'propack' ? '' : 'e'} ${singular} disponible pour le moment.`
+                : `Aucun${activeType === 'propack' ? '' : 'e'} ${singular} ne correspond à cette recherche.`}
             </p>
           </div>
         ) : (

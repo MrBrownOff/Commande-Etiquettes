@@ -8,6 +8,7 @@ import {
   deleteDoc,
   updateDoc,
   onSnapshot,
+  getDocs,
   writeBatch,
   arrayUnion,
   arrayRemove,
@@ -26,7 +27,7 @@ export interface StoreItem {
   banner?: string;
 }
 
-// Représente un item imprimable (étiquette ou fanion) : même structure pour les deux
+// Représente un item imprimable (étiquette ou Pro-Pack) : même structure pour les deux
 // catégories, qui vivent chacune dans leur propre collection Firestore indépendante.
 export interface LabelItem {
   id: string;
@@ -76,10 +77,10 @@ export const detectBannerFromName = (name: string, explicitBanner?: string): str
 
 interface AppState {
   labels: LabelItem[];
-  fanions: LabelItem[];
+  proPack: LabelItem[];
   stores: StoreItem[];
   printHistory: PrintHistoryEntry[];
-  fanionPrintHistory: PrintHistoryEntry[];
+  proPackPrintHistory: PrintHistoryEntry[];
   isLoading: boolean;
 
   // Actions Magasins
@@ -99,26 +100,32 @@ interface AppState {
   clearLabels: () => Promise<void>;
   logPrintRun: (entry: PrintRunEntry) => Promise<void>;
 
-  // Actions Fanions (catalogue indépendant des étiquettes, même structure)
-  addFanionsBatch: (fanions: LabelItem[]) => Promise<void>;
-  updateFanion: (id: string, updatedFields: Partial<LabelItem>) => void;
-  deleteFanion: (id: string) => Promise<void>;
-  assignStoresToFanions: (fanionIds: string[], storeIds: string[]) => Promise<void>;
-  removeStoresFromFanions: (fanionIds: string[], storeIds: string[]) => Promise<void>;
-  clearFanions: () => Promise<void>;
-  logFanionPrintRun: (entry: PrintRunEntry) => Promise<void>;
+  // Actions Pro-Pack (catalogue indépendant des étiquettes, même structure)
+  addProPackBatch: (items: LabelItem[]) => Promise<void>;
+  updateProPackItem: (id: string, updatedFields: Partial<LabelItem>) => void;
+  deleteProPackItem: (id: string) => Promise<void>;
+  assignStoresToProPack: (itemIds: string[], storeIds: string[]) => Promise<void>;
+  removeStoresFromProPack: (itemIds: string[], storeIds: string[]) => Promise<void>;
+  clearProPack: () => Promise<void>;
+  logProPackPrintRun: (entry: PrintRunEntry) => Promise<void>;
 
   // Gestion de Projet (JSON)
   exportProject: () => void;
-  importProject: (jsonData: { labels: LabelItem[]; fanions?: LabelItem[]; stores: StoreItem[] }) => Promise<void>;
+  importProject: (jsonData: { labels: LabelItem[]; proPack?: LabelItem[]; stores: StoreItem[] }) => Promise<void>;
 }
 
 const STORES_COLLECTION = 'stores';
 const LABELS_COLLECTION = 'labels';
-const FANIONS_COLLECTION = 'fanions';
+const PROPACK_COLLECTION = 'proPack';
 const PRINT_HISTORY_COLLECTION = 'printHistory';
-const FANION_PRINT_HISTORY_COLLECTION = 'fanionPrintHistory';
+const PROPACK_PRINT_HISTORY_COLLECTION = 'proPackPrintHistory';
 const PRINT_HISTORY_LIMIT = 50;
+
+// Anciens noms de collection utilisés avant le renommage "Fanions" -> "Pro-Pack" :
+// on y migre automatiquement une seule fois (voir startFirestoreSync) pour ne pas
+// perdre les items déjà saisis, sans jamais supprimer les anciennes données.
+const LEGACY_FANIONS_COLLECTION = 'fanions';
+const LEGACY_FANION_PRINT_HISTORY_COLLECTION = 'fanionPrintHistory';
 
 const DEFAULT_STORES: Omit<StoreItem, 'id'>[] = [
   { name: 'Canac Lévis', banner: 'Canac' },
@@ -139,7 +146,7 @@ const commitInChunks = async <T>(items: T[], applyOp: (batch: WriteBatch, item: 
 };
 
 // --- Helpers génériques, paramétrés par le nom de collection Firestore, partagés
-// entre les étiquettes et les fanions : chaque catégorie appelle ces mêmes fonctions
+// entre les étiquettes et le Pro-Pack : chaque catégorie appelle ces mêmes fonctions
 // avec sa propre collection, ce qui les rend indépendantes l'une de l'autre côté données.
 
 const addItemsBatchTo = async (collectionName: string, newItems: LabelItem[]) => {
@@ -187,20 +194,33 @@ const logRunTo = async (historyCollectionName: string, entry: PrintRunEntry) => 
   });
 };
 
+// Copie tous les documents d'une ancienne collection vers la nouvelle, sans jamais
+// supprimer l'ancienne (migration additive uniquement, sans risque de perte).
+const migrateLegacyCollection = async (fromCollection: string, toCollection: string) => {
+  const legacySnapshot = await getDocs(collection(db, fromCollection));
+  if (legacySnapshot.empty) return false;
+  const batch = writeBatch(db);
+  legacySnapshot.docs.forEach((d) => {
+    batch.set(doc(db, toCollection, d.id), d.data());
+  });
+  await batch.commit();
+  return true;
+};
+
 // Débounce des écritures Firestore par item (évite une requête réseau par frappe
 // clavier sur les champs référence/quantité) tout en gardant l'UI réactive localement.
-// Une Map indépendante par catégorie : une frappe sur un fanion ne retarde pas
+// Une Map indépendante par catégorie : une frappe sur un item Pro-Pack ne retarde pas
 // l'écriture en cours sur une étiquette, et vice-versa.
 const pendingLabelWrites = new Map<string, ReturnType<typeof setTimeout>>();
-const pendingFanionWrites = new Map<string, ReturnType<typeof setTimeout>>();
+const pendingProPackWrites = new Map<string, ReturnType<typeof setTimeout>>();
 const LABEL_WRITE_DEBOUNCE_MS = 500;
 
 export const useAppStore = create<AppState>()((set, get) => ({
   labels: [],
-  fanions: [],
+  proPack: [],
   stores: [],
   printHistory: [],
-  fanionPrintHistory: [],
+  proPackPrintHistory: [],
   isLoading: true,
 
   addStore: async (name, banner) => {
@@ -247,15 +267,15 @@ export const useAppStore = create<AppState>()((set, get) => ({
 
   deleteStore: async (id) => {
     const affectedLabels = get().labels.filter((l) => l.stores.includes(id));
-    const affectedFanions = get().fanions.filter((f) => f.stores.includes(id));
+    const affectedProPack = get().proPack.filter((f) => f.stores.includes(id));
     const batch = writeBatch(db);
     batch.delete(doc(db, STORES_COLLECTION, id));
     await batch.commit();
     await commitInChunks(affectedLabels, (b, l) => {
       b.update(doc(db, LABELS_COLLECTION, l.id), { stores: arrayRemove(id) });
     });
-    await commitInChunks(affectedFanions, (b, f) => {
-      b.update(doc(db, FANIONS_COLLECTION, f.id), { stores: arrayRemove(id) });
+    await commitInChunks(affectedProPack, (b, f) => {
+      b.update(doc(db, PROPACK_COLLECTION, f.id), { stores: arrayRemove(id) });
     });
   },
 
@@ -269,9 +289,9 @@ export const useAppStore = create<AppState>()((set, get) => ({
         stores: l.stores.filter((sId) => !storeIds.includes(sId)),
       });
     });
-    const affectedFanions = get().fanions.filter((f) => f.stores.some((sId) => storeIds.includes(sId)));
-    await commitInChunks(affectedFanions, (batch, f) => {
-      batch.update(doc(db, FANIONS_COLLECTION, f.id), {
+    const affectedProPack = get().proPack.filter((f) => f.stores.some((sId) => storeIds.includes(sId)));
+    await commitInChunks(affectedProPack, (batch, f) => {
+      batch.update(doc(db, PROPACK_COLLECTION, f.id), {
         stores: f.stores.filter((sId) => !storeIds.includes(sId)),
       });
     });
@@ -305,40 +325,40 @@ export const useAppStore = create<AppState>()((set, get) => ({
   clearLabels: () => clearItemsFrom(LABELS_COLLECTION, get().labels),
   logPrintRun: (entry) => logRunTo(PRINT_HISTORY_COLLECTION, entry),
 
-  addFanionsBatch: (newFanions) => addItemsBatchTo(FANIONS_COLLECTION, newFanions),
+  addProPackBatch: (newItems) => addItemsBatchTo(PROPACK_COLLECTION, newItems),
 
-  updateFanion: (id, updatedFields) => {
+  updateProPackItem: (id, updatedFields) => {
     set((state) => ({
-      fanions: state.fanions.map((f) => (f.id === id ? { ...f, ...updatedFields } : f)),
+      proPack: state.proPack.map((f) => (f.id === id ? { ...f, ...updatedFields } : f)),
     }));
 
-    const existingTimeout = pendingFanionWrites.get(id);
+    const existingTimeout = pendingProPackWrites.get(id);
     if (existingTimeout) clearTimeout(existingTimeout);
-    pendingFanionWrites.set(
+    pendingProPackWrites.set(
       id,
       setTimeout(() => {
-        pendingFanionWrites.delete(id);
-        updateDoc(doc(db, FANIONS_COLLECTION, id), updatedFields).catch(() => {
-          // Le fanion a probablement été supprimé entre-temps : rien à faire.
+        pendingProPackWrites.delete(id);
+        updateDoc(doc(db, PROPACK_COLLECTION, id), updatedFields).catch(() => {
+          // L'item a probablement été supprimé entre-temps : rien à faire.
         });
       }, LABEL_WRITE_DEBOUNCE_MS)
     );
   },
 
-  deleteFanion: (id) => deleteItemFrom(FANIONS_COLLECTION, pendingFanionWrites, id),
-  assignStoresToFanions: (fanionIds, storeIds) => assignStoresTo(FANIONS_COLLECTION, fanionIds, storeIds),
-  removeStoresFromFanions: (fanionIds, storeIds) => removeStoresFrom(FANIONS_COLLECTION, fanionIds, storeIds),
-  clearFanions: () => clearItemsFrom(FANIONS_COLLECTION, get().fanions),
-  logFanionPrintRun: (entry) => logRunTo(FANION_PRINT_HISTORY_COLLECTION, entry),
+  deleteProPackItem: (id) => deleteItemFrom(PROPACK_COLLECTION, pendingProPackWrites, id),
+  assignStoresToProPack: (itemIds, storeIds) => assignStoresTo(PROPACK_COLLECTION, itemIds, storeIds),
+  removeStoresFromProPack: (itemIds, storeIds) => removeStoresFrom(PROPACK_COLLECTION, itemIds, storeIds),
+  clearProPack: () => clearItemsFrom(PROPACK_COLLECTION, get().proPack),
+  logProPackPrintRun: (entry) => logRunTo(PROPACK_PRINT_HISTORY_COLLECTION, entry),
 
-  // Exporter tout le projet en JSON (étiquettes, fanions et magasins)
+  // Exporter tout le projet en JSON (étiquettes, Pro-Pack et magasins)
   exportProject: () => {
     const data = {
       version: '1.0',
       exportedAt: new Date().toISOString(),
       stores: get().stores,
       labels: get().labels,
-      fanions: get().fanions,
+      proPack: get().proPack,
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -355,8 +375,8 @@ export const useAppStore = create<AppState>()((set, get) => ({
     await commitInChunks(get().labels, (batch, l) => {
       batch.delete(doc(db, LABELS_COLLECTION, l.id));
     });
-    await commitInChunks(get().fanions, (batch, f) => {
-      batch.delete(doc(db, FANIONS_COLLECTION, f.id));
+    await commitInChunks(get().proPack, (batch, f) => {
+      batch.delete(doc(db, PROPACK_COLLECTION, f.id));
     });
     await commitInChunks(get().stores, (batch, s) => {
       batch.delete(doc(db, STORES_COLLECTION, s.id));
@@ -369,10 +389,10 @@ export const useAppStore = create<AppState>()((set, get) => ({
       const { id, ...rest } = l;
       batch.set(doc(db, LABELS_COLLECTION, id), rest);
     });
-    if (jsonData.fanions) {
-      await commitInChunks(jsonData.fanions, (batch, f) => {
+    if (jsonData.proPack) {
+      await commitInChunks(jsonData.proPack, (batch, f) => {
         const { id, ...rest } = f;
-        batch.set(doc(db, FANIONS_COLLECTION, id), rest);
+        batch.set(doc(db, PROPACK_COLLECTION, id), rest);
       });
     }
   },
@@ -380,16 +400,18 @@ export const useAppStore = create<AppState>()((set, get) => ({
 
 let storesLoaded = false;
 let labelsLoaded = false;
-let fanionsLoaded = false;
+let proPackLoaded = false;
 let defaultStoresSeeded = false;
+let proPackMigrated = false;
+let proPackHistoryMigrated = false;
 let unsubscribeStores: (() => void) | null = null;
 let unsubscribeLabels: (() => void) | null = null;
-let unsubscribeFanions: (() => void) | null = null;
+let unsubscribeProPack: (() => void) | null = null;
 let unsubscribePrintHistory: (() => void) | null = null;
-let unsubscribeFanionPrintHistory: (() => void) | null = null;
+let unsubscribeProPackPrintHistory: (() => void) | null = null;
 
 const markLoadedIfReady = () => {
-  if (storesLoaded && labelsLoaded && fanionsLoaded) {
+  if (storesLoaded && labelsLoaded && proPackLoaded) {
     useAppStore.setState({ isLoading: false });
   }
 };
@@ -399,7 +421,7 @@ const markLoadedIfReady = () => {
 const startFirestoreSync = () => {
   storesLoaded = false;
   labelsLoaded = false;
-  fanionsLoaded = false;
+  proPackLoaded = false;
 
   unsubscribeStores = onSnapshot(
     collection(db, STORES_COLLECTION),
@@ -434,15 +456,23 @@ const startFirestoreSync = () => {
     (error) => console.error('Erreur de synchronisation des étiquettes :', error)
   );
 
-  unsubscribeFanions = onSnapshot(
-    collection(db, FANIONS_COLLECTION),
-    (snapshot) => {
-      const fanions = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as LabelItem);
-      useAppStore.setState({ fanions });
-      fanionsLoaded = true;
+  unsubscribeProPack = onSnapshot(
+    collection(db, PROPACK_COLLECTION),
+    async (snapshot) => {
+      // Migre une seule fois les items de l'ancienne collection "fanions" (avant le
+      // renommage en Pro-Pack) si la nouvelle collection est encore vide.
+      if (snapshot.empty && !proPackLoaded && !proPackMigrated) {
+        proPackMigrated = true;
+        const migrated = await migrateLegacyCollection(LEGACY_FANIONS_COLLECTION, PROPACK_COLLECTION);
+        if (migrated) return; // le prochain snapshot contiendra les items migrés
+      }
+
+      const proPack = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as LabelItem);
+      useAppStore.setState({ proPack });
+      proPackLoaded = true;
       markLoadedIfReady();
     },
-    (error) => console.error('Erreur de synchronisation des fanions :', error)
+    (error) => console.error('Erreur de synchronisation du Pro-Pack :', error)
   );
 
   unsubscribePrintHistory = onSnapshot(
@@ -454,34 +484,43 @@ const startFirestoreSync = () => {
     (error) => console.error("Erreur de synchronisation de l'historique d'impression :", error)
   );
 
-  unsubscribeFanionPrintHistory = onSnapshot(
-    query(collection(db, FANION_PRINT_HISTORY_COLLECTION), orderBy('createdAt', 'desc'), limit(PRINT_HISTORY_LIMIT)),
-    (snapshot) => {
-      const fanionPrintHistory = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as PrintHistoryEntry);
-      useAppStore.setState({ fanionPrintHistory });
+  unsubscribeProPackPrintHistory = onSnapshot(
+    query(collection(db, PROPACK_PRINT_HISTORY_COLLECTION), orderBy('createdAt', 'desc'), limit(PRINT_HISTORY_LIMIT)),
+    async (snapshot) => {
+      if (snapshot.empty && !proPackHistoryMigrated) {
+        proPackHistoryMigrated = true;
+        const migrated = await migrateLegacyCollection(
+          LEGACY_FANION_PRINT_HISTORY_COLLECTION,
+          PROPACK_PRINT_HISTORY_COLLECTION
+        );
+        if (migrated) return;
+      }
+
+      const proPackPrintHistory = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as PrintHistoryEntry);
+      useAppStore.setState({ proPackPrintHistory });
     },
-    (error) => console.error("Erreur de synchronisation de l'historique d'impression des fanions :", error)
+    (error) => console.error("Erreur de synchronisation de l'historique d'impression Pro-Pack :", error)
   );
 };
 
 const stopFirestoreSync = () => {
   unsubscribeStores?.();
   unsubscribeLabels?.();
-  unsubscribeFanions?.();
+  unsubscribeProPack?.();
   unsubscribePrintHistory?.();
-  unsubscribeFanionPrintHistory?.();
+  unsubscribeProPackPrintHistory?.();
   unsubscribeStores = null;
   unsubscribeLabels = null;
-  unsubscribeFanions = null;
+  unsubscribeProPack = null;
   unsubscribePrintHistory = null;
-  unsubscribeFanionPrintHistory = null;
+  unsubscribeProPackPrintHistory = null;
   defaultStoresSeeded = false;
   useAppStore.setState({
     labels: [],
-    fanions: [],
+    proPack: [],
     stores: [],
     printHistory: [],
-    fanionPrintHistory: [],
+    proPackPrintHistory: [],
     isLoading: true,
   });
 };

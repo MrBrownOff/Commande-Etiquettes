@@ -17,7 +17,7 @@ const isRepresentantAccount = (email?: string | null) =>
   (email ?? '').toLowerCase().includes('representant');
 
 function AppContent() {
-  const [currentTab, setCurrentTab] = useState<'labels' | 'fanions' | 'stores' | 'project'>('labels');
+  const [currentTab, setCurrentTab] = useState<'labels' | 'propack' | 'stores' | 'project'>('labels');
   const isLoading = useAppStore((state) => state.isLoading);
 
   if (isLoading) {
@@ -40,7 +40,7 @@ function AppContent() {
       {/* Rendu dynamique de la vue sélectionnée */}
       <main className="flex-1 overflow-auto">
         {currentTab === 'labels' && <LabelsView itemType="labels" />}
-        {currentTab === 'fanions' && <LabelsView itemType="fanions" />}
+        {currentTab === 'propack' && <LabelsView itemType="propack" />}
         {currentTab === 'stores' && <StoresView />}
         {currentTab === 'project' && <ProjectView />}
       </main>

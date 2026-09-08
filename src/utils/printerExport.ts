@@ -6,7 +6,7 @@ const PAGE_WIDTH = 595.28; // A4 en points (210mm)
 const PAGE_HEIGHT = 841.89; // A4 en points (297mm)
 const MARGIN_MM = 15;
 
-export type PrintableKind = 'labels' | 'fanions';
+export type PrintableKind = 'labels' | 'propack';
 
 // Chaque catégorie a son propre dossier d'assets et son propre format d'impression
 // cible : l'item n'est jamais agrandi au-delà de cette taille — il y est simplement
@@ -24,14 +24,14 @@ const KIND_CONFIG: Record<
     fileSlug: 'etiquettes',
     noun: 'étiquette',
   },
-  fanions: {
-    pdfFolder: 'fanions-pdf',
-    imgFolder: 'fanions',
+  propack: {
+    pdfFolder: 'pro-pack-pdf',
+    imgFolder: 'pro-pack',
     widthIn: 8.5,
     heightIn: 3.25,
-    coverTitle: 'Bon de commande — Fanions',
-    fileSlug: 'fanions',
-    noun: 'fanion',
+    coverTitle: 'Bon de commande — Pro-Pack',
+    fileSlug: 'pro-pack',
+    noun: 'Pro-Pack',
   },
 };
 
@@ -118,7 +118,7 @@ const embedItem = async (
 };
 
 // Génère un PDF prêt pour l'imprimeur : une page de garde récapitulative,
-// suivie d'une page par exemplaire commandé de chaque item (étiquette ou fanion).
+// suivie d'une page par exemplaire commandé de chaque item (étiquette ou Pro-Pack).
 export const generatePrinterPDF = async (items: LabelItem[], stores: StoreItem[], kind: PrintableKind = 'labels') => {
   const config = KIND_CONFIG[kind];
   const itemWidthPt = config.widthIn * 72;
@@ -126,7 +126,7 @@ export const generatePrinterPDF = async (items: LabelItem[], stores: StoreItem[]
 
   const orderedItems = items.filter((l) => (l.quantity ?? 0) > 0);
   if (orderedItems.length === 0) {
-    throw new Error(`Aucun${kind === 'fanions' ? '' : 'e'} ${config.noun} n'a de quantité renseignée.`);
+    throw new Error(`Aucun${kind === 'propack' ? '' : 'e'} ${config.noun} n'a de quantité renseignée.`);
   }
 
   const pdfDoc = await PDFDocument.create();

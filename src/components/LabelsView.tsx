@@ -7,30 +7,31 @@ import { generatePrinterPDF, PrintableKind } from '../utils/printerExport';
 
 interface LabelsViewProps {
   // Catégorie d'items gérée par cette instance de la vue : "labels" (étiquettes) ou
-  // "fanions". Les deux catégories partagent exactement le même composant/comportement,
-  // mais opèrent sur des collections Firestore, dossiers d'assets et historiques
-  // d'impression totalement indépendants (voir store.ts et printerExport.ts).
+  // "propack" (Pro-Pack). Les deux catégories partagent exactement le même
+  // composant/comportement, mais opèrent sur des collections Firestore, dossiers
+  // d'assets et historiques d'impression totalement indépendants (voir store.ts et
+  // printerExport.ts).
   itemType?: PrintableKind;
 }
 
 const TYPE_TEXT: Record<PrintableKind, { singular: string; plural: string; pluralCapitalized: string; folder: string }> = {
   labels: { singular: 'étiquette', plural: 'étiquettes', pluralCapitalized: 'Étiquettes', folder: 'labels' },
-  fanions: { singular: 'fanion', plural: 'fanions', pluralCapitalized: 'Fanions', folder: 'fanions' },
+  propack: { singular: 'Pro-Pack', plural: 'Pro-Pack', pluralCapitalized: 'Pro-Pack', folder: 'pro-pack' },
 };
 
 export const LabelsView: React.FC<LabelsViewProps> = ({ itemType = 'labels' }) => {
   const store = useAppStore();
   const text = TYPE_TEXT[itemType];
 
-  const items = itemType === 'fanions' ? store.fanions : store.labels;
+  const items = itemType === 'propack' ? store.proPack : store.labels;
   const { stores } = store;
-  const addItemsBatch = itemType === 'fanions' ? store.addFanionsBatch : store.addLabelsBatch;
-  const updateItem = itemType === 'fanions' ? store.updateFanion : store.updateLabel;
-  const deleteItem = itemType === 'fanions' ? store.deleteFanion : store.deleteLabel;
-  const clearItems = itemType === 'fanions' ? store.clearFanions : store.clearLabels;
-  const assignStoresToItems = itemType === 'fanions' ? store.assignStoresToFanions : store.assignStoresToLabels;
-  const removeStoresFromItems = itemType === 'fanions' ? store.removeStoresFromFanions : store.removeStoresFromLabels;
-  const logRun = itemType === 'fanions' ? store.logFanionPrintRun : store.logPrintRun;
+  const addItemsBatch = itemType === 'propack' ? store.addProPackBatch : store.addLabelsBatch;
+  const updateItem = itemType === 'propack' ? store.updateProPackItem : store.updateLabel;
+  const deleteItem = itemType === 'propack' ? store.deleteProPackItem : store.deleteLabel;
+  const clearItems = itemType === 'propack' ? store.clearProPack : store.clearLabels;
+  const assignStoresToItems = itemType === 'propack' ? store.assignStoresToProPack : store.assignStoresToLabels;
+  const removeStoresFromItems = itemType === 'propack' ? store.removeStoresFromProPack : store.removeStoresFromLabels;
+  const logRun = itemType === 'propack' ? store.logProPackPrintRun : store.logPrintRun;
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -44,8 +45,8 @@ export const LabelsView: React.FC<LabelsViewProps> = ({ itemType = 'labels' }) =
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
 
   // Réinitialise la sélection et les filtres locaux en changeant de catégorie
-  // (ex. onglet Étiquettes -> Fanions), pour éviter qu'une sélection d'étiquettes
-  // ne se retrouve appliquée par erreur à des fanions.
+  // (ex. onglet Étiquettes -> Pro-Pack), pour éviter qu'une sélection d'étiquettes
+  // ne se retrouve appliquée par erreur à des items Pro-Pack.
   useEffect(() => {
     setSelectedItemIds([]);
     setSearchQuery('');
@@ -365,8 +366,8 @@ export const LabelsView: React.FC<LabelsViewProps> = ({ itemType = 'labels' }) =
             <Store size={32} className="mb-3 text-gray-300" />
             <p className="text-base font-medium text-gray-600">
               {storeFilterName
-                ? `Aucun${itemType === 'fanions' ? '' : 'e'} ${text.singular} affecté${itemType === 'fanions' ? '' : 'e'} à « ${storeFilterName} ».`
-                : `Aucun${itemType === 'fanions' ? '' : 'e'} ${text.singular} ne correspond à cette recherche.`}
+                ? `Aucun${itemType === 'propack' ? '' : 'e'} ${text.singular} affecté${itemType === 'propack' ? '' : 'e'} à « ${storeFilterName} ».`
+                : `Aucun${itemType === 'propack' ? '' : 'e'} ${text.singular} ne correspond à cette recherche.`}
             </p>
           </div>
         ) : (
@@ -485,7 +486,7 @@ export const LabelsView: React.FC<LabelsViewProps> = ({ itemType = 'labels' }) =
                       <button
                         onClick={() => deleteItem(item.id)}
                         className="text-gray-400 hover:text-red-500 transition p-1"
-                        title={itemType === 'fanions' ? 'Supprimer le fanion' : "Supprimer l'étiquette"}
+                        title={itemType === 'propack' ? 'Supprimer le Pro-Pack' : "Supprimer l'étiquette"}
                       >
                         <Trash2 size={16} />
                       </button>
