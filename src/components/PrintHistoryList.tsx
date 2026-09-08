@@ -4,6 +4,7 @@ import { PrintHistoryEntry } from '../store/store';
 
 interface PrintHistoryListProps {
   entries: PrintHistoryEntry[];
+  noun?: string;
 }
 
 const formatDate = (entry: PrintHistoryEntry): string => {
@@ -14,7 +15,7 @@ const formatDate = (entry: PrintHistoryEntry): string => {
   });
 };
 
-export const PrintHistoryList: React.FC<PrintHistoryListProps> = ({ entries }) => {
+export const PrintHistoryList: React.FC<PrintHistoryListProps> = ({ entries, noun = 'étiquette' }) => {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   return (
@@ -48,7 +49,7 @@ export const PrintHistoryList: React.FC<PrintHistoryListProps> = ({ entries }) =
                     <span className="text-sm font-medium text-gray-800">{formatDate(entry)}</span>
                   </div>
                   <span className="text-xs text-gray-500">
-                    {entry.totalReferences} référence(s), {entry.totalQuantity} étiquette(s)
+                    {entry.totalReferences} référence(s), {entry.totalQuantity} {noun}(s)
                     {entry.storeNames.length > 0 ? ` — ${entry.storeNames.join(', ')}` : ''}
                   </span>
                 </button>

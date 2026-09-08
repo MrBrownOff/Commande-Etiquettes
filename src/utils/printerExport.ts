@@ -6,34 +6,57 @@ const PAGE_WIDTH = 595.28; // A4 en points (210mm)
 const PAGE_HEIGHT = 841.89; // A4 en points (297mm)
 const MARGIN_MM = 15;
 
-// Taille d'impression cible d'une étiquette (format le plus courant : 2 x 3,25 po).
-// L'étiquette n'est jamais agrandie au-delà de cette taille — elle y est simplement
-// contenue, ce qui garantit une résolution d'impression élevée quelle que soit la source.
-const LABEL_WIDTH_PT = 2 * 72;
-const LABEL_HEIGHT_PT = 3.25 * 72;
+export type PrintableKind = 'labels' | 'fanions';
+
+// Chaque catégorie a son propre dossier d'assets et son propre format d'impression
+// cible : l'item n'est jamais agrandi au-delà de cette taille — il y est simplement
+// contenu, ce qui garantit une résolution d'impression élevée quelle que soit la source.
+const KIND_CONFIG: Record<
+  PrintableKind,
+  { pdfFolder: string; imgFolder: string; widthIn: number; heightIn: number; coverTitle: string; fileSlug: string; noun: string }
+> = {
+  labels: {
+    pdfFolder: 'labels-pdf',
+    imgFolder: 'labels',
+    widthIn: 2,
+    heightIn: 3.25,
+    coverTitle: 'Bon de commande — Étiquettes',
+    fileSlug: 'etiquettes',
+    noun: 'étiquette',
+  },
+  fanions: {
+    pdfFolder: 'fanions-pdf',
+    imgFolder: 'fanions',
+    widthIn: 8.5,
+    heightIn: 3.25,
+    coverTitle: 'Bon de commande — Fanions',
+    fileSlug: 'fanions',
+    noun: 'fanion',
+  },
+};
 
 // Candidats JPEG à essayer dans l'ordre : les URL blob issues d'un import de fichiers ne
 // survivent pas à un rechargement de page ou à une restauration de projet JSON — dans
 // ce cas on doit se rabattre sur le fichier statique nommé d'après la référence.
-const getLabelImageCandidates = (label: LabelItem): string[] => {
-  const candidates = [label.thumbnailUrl, label.imageUrl];
-  candidates.push(`${import.meta.env.BASE_URL}labels/${label.reference}.jpg`);
-  candidates.push(`${import.meta.env.BASE_URL}${label.reference}.jpg`);
+const getItemImageCandidates = (item: LabelItem, imgFolder: string): string[] => {
+  const candidates = [item.thumbnailUrl, item.imageUrl];
+  candidates.push(`${import.meta.env.BASE_URL}${imgFolder}/${item.reference}.jpg`);
+  candidates.push(`${import.meta.env.BASE_URL}${item.reference}.jpg`);
   return Array.from(new Set(candidates.filter((src): src is string => Boolean(src))));
 };
 
-const getLabelPdfCandidate = (label: LabelItem): string =>
-  `${import.meta.env.BASE_URL}labels-pdf/${label.reference}.pdf`;
+const getItemPdfCandidate = (item: LabelItem, pdfFolder: string): string =>
+  `${import.meta.env.BASE_URL}${pdfFolder}/${item.reference}.pdf`;
 
 type TrimBox = { x: number; y: number; width: number; height: number };
 
-type EmbeddedLabel =
+type EmbeddedItem =
   | {
       kind: 'pdf';
       source: Awaited<ReturnType<PDFDocument['embedPdf']>>[number];
       width: number;
       height: number;
-      // Zone de coupe réelle de l'étiquette à l'intérieur de la page source
+      // Zone de coupe réelle de l'item à l'intérieur de la page source
       // (peut être plus petite que la page si celle-ci inclut une marge de
       // fond perdu et des traits de coupe pour l'imprimerie). Absent = la
       // page entière fait office de zone de coupe.
@@ -41,25 +64,29 @@ type EmbeddedLabel =
     }
   | { kind: 'jpg'; source: Awaited<ReturnType<PDFDocument['embedJpg']>>; width: number; height: number };
 
-// Essaie d'abord la version PDF vectorielle de l'étiquette (qualité et couleurs fidèles
+// Essaie d'abord la version PDF vectorielle de l'item (qualité et couleurs fidèles
 // à l'original, indépendamment de la résolution), puis se rabat sur le JPEG si aucun PDF
 // n'existe pour cette référence.
-const embedLabel = async (pdfDoc: PDFDocument, label: LabelItem): Promise<EmbeddedLabel | null> => {
+const embedItem = async (
+  pdfDoc: PDFDocument,
+  item: LabelItem,
+  pdfFolder: string,
+  imgFolder: string
+): Promise<EmbeddedItem | null> => {
   try {
-    const res = await fetch(getLabelPdfCandidate(label));
+    const res = await fetch(getItemPdfCandidate(item, pdfFolder));
     if (res.ok) {
       const bytes = await res.arrayBuffer();
       const srcDoc = await PDFDocument.load(bytes);
       if (srcDoc.getPageCount() > 0) {
         const srcPage = srcDoc.getPage(0);
         // La page source contient une marge de fond perdu et des traits de
-        // coupe pour l'imprimerie : sa MediaBox (ex. 3" x 4,25") est plus
-        // grande que la taille réelle de l'étiquette une fois coupée,
-        // définie par sa TrimBox (ex. 2" x 3,25"). On intègre la page
-        // complète (marge + traits de coupe conservés pour le massicot),
-        // mais le ratio d'ajustement et le centrage plus bas se basent sur
-        // la TrimBox pour que la zone de coupe finale fasse exactement
-        // 2" x 3,25", peu importe la taille de la marge autour.
+        // coupe pour l'imprimerie : sa MediaBox est plus grande que la taille
+        // réelle de l'item une fois coupé, définie par sa TrimBox. On intègre
+        // la page complète (marge + traits de coupe conservés pour le
+        // massicot), mais le ratio d'ajustement et le centrage plus bas se
+        // basent sur la TrimBox pour que la zone de coupe finale fasse
+        // exactement la taille cible, peu importe la taille de la marge autour.
         const [embedded] = await pdfDoc.embedPdf(srcDoc, [0]);
         const tb = srcPage.getTrimBox();
         return {
@@ -75,7 +102,7 @@ const embedLabel = async (pdfDoc: PDFDocument, label: LabelItem): Promise<Embedd
     // Pas de PDF exploitable pour cette référence : on se rabat sur le JPEG.
   }
 
-  for (const src of getLabelImageCandidates(label)) {
+  for (const src of getItemImageCandidates(item, imgFolder)) {
     try {
       const res = await fetch(src);
       if (!res.ok) continue;
@@ -91,11 +118,15 @@ const embedLabel = async (pdfDoc: PDFDocument, label: LabelItem): Promise<Embedd
 };
 
 // Génère un PDF prêt pour l'imprimeur : une page de garde récapitulative,
-// suivie d'une page par exemplaire commandé de chaque étiquette.
-export const generatePrinterPDF = async (labels: LabelItem[], stores: StoreItem[]) => {
-  const orderedLabels = labels.filter((l) => (l.quantity ?? 0) > 0);
-  if (orderedLabels.length === 0) {
-    throw new Error("Aucune étiquette n'a de quantité renseignée.");
+// suivie d'une page par exemplaire commandé de chaque item (étiquette ou fanion).
+export const generatePrinterPDF = async (items: LabelItem[], stores: StoreItem[], kind: PrintableKind = 'labels') => {
+  const config = KIND_CONFIG[kind];
+  const itemWidthPt = config.widthIn * 72;
+  const itemHeightPt = config.heightIn * 72;
+
+  const orderedItems = items.filter((l) => (l.quantity ?? 0) > 0);
+  if (orderedItems.length === 0) {
+    throw new Error(`Aucun${kind === 'fanions' ? '' : 'e'} ${config.noun} n'a de quantité renseignée.`);
   }
 
   const pdfDoc = await PDFDocument.create();
@@ -103,11 +134,11 @@ export const generatePrinterPDF = async (labels: LabelItem[], stores: StoreItem[
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   const black = rgb(0, 0, 0);
 
-  const total = orderedLabels.reduce((sum, l) => sum + (l.quantity ?? 0), 0);
+  const total = orderedItems.reduce((sum, l) => sum + (l.quantity ?? 0), 0);
   const storeNames = Array.from(
     new Set(
-      orderedLabels
-        .flatMap((label) => label.stores.map((id) => stores.find((s) => s.id === id)?.name))
+      orderedItems
+        .flatMap((item) => item.stores.map((id) => stores.find((s) => s.id === id)?.name))
         .filter((name): name is string => Boolean(name))
     )
   ).sort();
@@ -127,12 +158,12 @@ export const generatePrinterPDF = async (labels: LabelItem[], stores: StoreItem[
     page.drawText(text, { x: mmToPt(xMm), y: yFromTop(yMmFromTop), size, font: useFont, color: black });
   };
 
-  // Page de garde — simple récapitulatif : nombre d'étiquettes et magasins concernés
+  // Page de garde — simple récapitulatif : nombre d'items et magasins concernés
   const coverPage = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-  drawText(coverPage, 'Bon de commande — Étiquettes', MARGIN_MM, MARGIN_MM + 5, 18, fontBold);
+  drawText(coverPage, config.coverTitle, MARGIN_MM, MARGIN_MM + 5, 18, fontBold);
   drawText(
     coverPage,
-    `Généré le ${new Date().toLocaleDateString('fr-CA')} — ${orderedLabels.length} référence(s), ${total} étiquette(s) au total`,
+    `Généré le ${new Date().toLocaleDateString('fr-CA')} — ${orderedItems.length} référence(s), ${total} ${config.noun}(s) au total`,
     MARGIN_MM,
     MARGIN_MM + 15,
     11
@@ -163,31 +194,31 @@ export const generatePrinterPDF = async (labels: LabelItem[], stores: StoreItem[
     }
   }
 
-  // Pages d'étiquettes : une page par exemplaire commandé, sans légende superflue
-  const missingLabels: string[] = [];
-  for (const label of orderedLabels) {
-    const qty = label.quantity ?? 0;
-    const embedded = await embedLabel(pdfDoc, label);
+  // Pages d'items : une page par exemplaire commandé, sans légende superflue
+  const missingItems: string[] = [];
+  for (const item of orderedItems) {
+    const qty = item.quantity ?? 0;
+    const embedded = await embedItem(pdfDoc, item, config.pdfFolder, config.imgFolder);
     if (!embedded) {
-      missingLabels.push(label.reference);
+      missingItems.push(item.reference);
       continue;
     }
 
     // Le ratio d'ajustement se base sur la TrimBox (la taille réelle une fois
     // coupée) quand elle est disponible, pas sur la page entière — sinon la
-    // marge de fond perdu serait comptée dans le calcul et l'étiquette
-    // rétrécirait en trop. Repli sur les dimensions de la page si l'étiquette
-    // (PDF ou JPEG) n'a pas de TrimBox distincte.
+    // marge de fond perdu serait comptée dans le calcul et l'item rétrécirait
+    // en trop. Repli sur les dimensions de la page si l'item (PDF ou JPEG)
+    // n'a pas de TrimBox distincte.
     const trimBox = embedded.kind === 'pdf' ? embedded.trimBox : undefined;
     const refWidth = trimBox?.width ?? embedded.width;
     const refHeight = trimBox?.height ?? embedded.height;
-    const ratio = Math.min(LABEL_WIDTH_PT / refWidth, LABEL_HEIGHT_PT / refHeight);
+    const ratio = Math.min(itemWidthPt / refWidth, itemHeightPt / refHeight);
     const w = embedded.width * ratio;
     const h = embedded.height * ratio;
 
     // On centre la TrimBox sur la page (pas le coin de la page entière),
     // pour que la marge de fond perdu et les traits de coupe restent
-    // répartis également autour de l'étiquette et exploitables au massicot.
+    // répartis également autour de l'item et exploitables au massicot.
     let x: number;
     let y: number;
     if (trimBox) {
@@ -213,20 +244,20 @@ export const generatePrinterPDF = async (labels: LabelItem[], stores: StoreItem[
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `commande_impression_etiquettes_${new Date().toISOString().slice(0, 10)}.pdf`;
+  a.download = `commande_impression_${config.fileSlug}_${new Date().toISOString().slice(0, 10)}.pdf`;
   a.click();
   URL.revokeObjectURL(url);
 
   return {
-    missingLabels,
+    missingLabels: missingItems,
     summary: {
-      totalReferences: orderedLabels.length,
+      totalReferences: orderedItems.length,
       totalQuantity: total,
       storeNames,
-      items: orderedLabels.map((label) => ({
-        reference: label.reference,
-        quantity: label.quantity ?? 0,
-        storeNames: label.stores
+      items: orderedItems.map((item) => ({
+        reference: item.reference,
+        quantity: item.quantity ?? 0,
+        storeNames: item.stores
           .map((id) => stores.find((s) => s.id === id)?.name)
           .filter((name): name is string => Boolean(name)),
       })),

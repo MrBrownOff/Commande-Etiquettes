@@ -3,10 +3,35 @@ import { useAppStore, LabelItem } from '../store/store';
 import { Upload, Search, Loader2, CheckSquare, Square, Trash2, Printer, Store, X, ChevronDown } from 'lucide-react';
 import { StoreAssignPopover } from './StoreAssignPopover';
 import { BatchStoreAssignPopover } from './BatchStoreAssignPopover';
-import { generatePrinterPDF } from '../utils/printerExport';
+import { generatePrinterPDF, PrintableKind } from '../utils/printerExport';
 
-export const LabelsView: React.FC = () => {
-  const { labels, stores, addLabelsBatch, deleteLabel, clearLabels, updateLabel, logPrintRun } = useAppStore();
+interface LabelsViewProps {
+  // Catégorie d'items gérée par cette instance de la vue : "labels" (étiquettes) ou
+  // "fanions". Les deux catégories partagent exactement le même composant/comportement,
+  // mais opèrent sur des collections Firestore, dossiers d'assets et historiques
+  // d'impression totalement indépendants (voir store.ts et printerExport.ts).
+  itemType?: PrintableKind;
+}
+
+const TYPE_TEXT: Record<PrintableKind, { singular: string; plural: string; pluralCapitalized: string; folder: string }> = {
+  labels: { singular: 'étiquette', plural: 'étiquettes', pluralCapitalized: 'Étiquettes', folder: 'labels' },
+  fanions: { singular: 'fanion', plural: 'fanions', pluralCapitalized: 'Fanions', folder: 'fanions' },
+};
+
+export const LabelsView: React.FC<LabelsViewProps> = ({ itemType = 'labels' }) => {
+  const store = useAppStore();
+  const text = TYPE_TEXT[itemType];
+
+  const items = itemType === 'fanions' ? store.fanions : store.labels;
+  const { stores } = store;
+  const addItemsBatch = itemType === 'fanions' ? store.addFanionsBatch : store.addLabelsBatch;
+  const updateItem = itemType === 'fanions' ? store.updateFanion : store.updateLabel;
+  const deleteItem = itemType === 'fanions' ? store.deleteFanion : store.deleteLabel;
+  const clearItems = itemType === 'fanions' ? store.clearFanions : store.clearLabels;
+  const assignStoresToItems = itemType === 'fanions' ? store.assignStoresToFanions : store.assignStoresToLabels;
+  const removeStoresFromItems = itemType === 'fanions' ? store.removeStoresFromFanions : store.removeStoresFromLabels;
+  const logRun = itemType === 'fanions' ? store.logFanionPrintRun : store.logPrintRun;
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [isProcessing, setIsProcessing] = useState(false);
@@ -15,8 +40,17 @@ export const LabelsView: React.FC = () => {
   const [isStoreDropdownOpen, setIsStoreDropdownOpen] = useState(false);
   const [storeDropdownSearch, setStoreDropdownSearch] = useState('');
   const storeDropdownRef = useRef<HTMLDivElement>(null);
-  const [selectedLabelIds, setSelectedLabelIds] = useState<string[]>([]);
+  const [selectedItemIds, setSelectedItemIds] = useState<string[]>([]);
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
+
+  // Réinitialise la sélection et les filtres locaux en changeant de catégorie
+  // (ex. onglet Étiquettes -> Fanions), pour éviter qu'une sélection d'étiquettes
+  // ne se retrouve appliquée par erreur à des fanions.
+  useEffect(() => {
+    setSelectedItemIds([]);
+    setSearchQuery('');
+    setStoreFilter('');
+  }, [itemType]);
 
   // Fermer le menu déroulant du filtre magasin si clic à l'extérieur
   useEffect(() => {
@@ -40,8 +74,8 @@ export const LabelsView: React.FC = () => {
 
     setIsProcessing(true);
     // Pas d'URL blob persistée : elle ne survivrait pas à la session en cours.
-    // L'image est retrouvée via son nom de fichier dans public/labels/ (voir fallback d'affichage).
-    const newLabels: LabelItem[] = Array.from(files).map((file) => ({
+    // L'image est retrouvée via son nom de fichier dans public/<dossier>/ (voir fallback d'affichage).
+    const newItems: LabelItem[] = Array.from(files).map((file) => ({
       id: crypto.randomUUID(),
       reference: file.name.replace(/\.[^/.]+$/, ''), // ex: "BC0361596.jpg" -> "BC0361596"
       filename: file.name,
@@ -51,28 +85,28 @@ export const LabelsView: React.FC = () => {
       quantity: 1,
     }));
 
-    await addLabelsBatch(newLabels);
+    await addItemsBatch(newItems);
     setIsProcessing(false);
 
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  // Vider toutes les étiquettes
-  const handleClearLabels = () => {
-    if (window.confirm("Êtes-vous sûr de vouloir supprimer toutes les étiquettes ?")) {
-      clearLabels();
+  // Vider tous les items de cette catégorie
+  const handleClearItems = () => {
+    if (window.confirm(`Êtes-vous sûr de vouloir supprimer tous les ${text.plural} ?`)) {
+      clearItems();
     }
   };
 
   // Filtrage instantané par référence et/ou par magasin affecté
-  const filteredLabels = useMemo(() => {
+  const filteredItems = useMemo(() => {
     const query = searchQuery.toLowerCase().trim();
-    return labels.filter((label) => {
-      if (storeFilter && !label.stores.includes(storeFilter)) return false;
-      if (query && !label.reference.toLowerCase().includes(query)) return false;
+    return items.filter((item) => {
+      if (storeFilter && !item.stores.includes(storeFilter)) return false;
+      if (query && !item.reference.toLowerCase().includes(query)) return false;
       return true;
     });
-  }, [labels, searchQuery, storeFilter]);
+  }, [items, searchQuery, storeFilter]);
 
   const storeFilterName = storeFilter ? stores.find((s) => s.id === storeFilter)?.name : null;
 
@@ -95,30 +129,30 @@ export const LabelsView: React.FC = () => {
 
   // Sélection multiple
   const toggleSelectAll = () => {
-    if (selectedLabelIds.length === filteredLabels.length) {
-      setSelectedLabelIds([]);
+    if (selectedItemIds.length === filteredItems.length) {
+      setSelectedItemIds([]);
     } else {
-      setSelectedLabelIds(filteredLabels.map((l) => l.id));
+      setSelectedItemIds(filteredItems.map((l) => l.id));
     }
   };
 
-  const toggleSelectLabel = (id: string) => {
-    setSelectedLabelIds((prev) =>
+  const toggleSelectItem = (id: string) => {
+    setSelectedItemIds((prev) =>
       prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
     );
   };
 
-  // Génère le PDF imprimeur pour uniquement les étiquettes cochées,
-  // sans tenir compte des quantités des étiquettes non sélectionnées.
+  // Génère le PDF imprimeur pour uniquement les items cochés,
+  // sans tenir compte des quantités des items non sélectionnés.
   const handleGenerateSelectionPDF = async () => {
-    const selectedLabels = labels.filter((l) => selectedLabelIds.includes(l.id));
+    const selectedItems = items.filter((l) => selectedItemIds.includes(l.id));
     setIsGeneratingPDF(true);
     try {
-      const { missingLabels, summary } = await generatePrinterPDF(selectedLabels, stores);
-      await logPrintRun(summary);
+      const { missingLabels, summary } = await generatePrinterPDF(selectedItems, stores, itemType);
+      await logRun(summary);
       if (missingLabels.length > 0) {
         alert(
-          `Le PDF a été généré, mais l'image de ${missingLabels.length} étiquette(s) était introuvable et a été omise : ${missingLabels.join(', ')}`
+          `Le PDF a été généré, mais l'image de ${missingLabels.length} ${text.singular}(s) était introuvable et a été omise : ${missingLabels.join(', ')}`
         );
       }
     } catch (err) {
@@ -215,7 +249,7 @@ export const LabelsView: React.FC = () => {
 
           {storeFilterName && (
             <span className="flex items-center gap-1.5 bg-orange-50 text-orange-700 text-xs font-medium px-2.5 py-1.5 rounded-lg whitespace-nowrap">
-              {filteredLabels.length} étiquette(s) pour « {storeFilterName} »
+              {filteredItems.length} {text.singular}(s) pour « {storeFilterName} »
               <button onClick={() => setStoreFilter('')} className="hover:text-orange-900" title="Retirer le filtre">
                 <X size={13} />
               </button>
@@ -224,12 +258,12 @@ export const LabelsView: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-3">
-          {labels.length > 0 && (
+          {items.length > 0 && (
             <button
-              onClick={handleClearLabels}
+              onClick={handleClearItems}
               className="flex items-center gap-1.5 bg-red-50 hover:bg-red-100 text-red-600 px-3 py-2 rounded-lg transition text-xs font-semibold"
             >
-              <Trash2 size={15} /> Vider les étiquettes
+              <Trash2 size={15} /> Vider les {text.plural}
             </button>
           )}
 
@@ -239,7 +273,7 @@ export const LabelsView: React.FC = () => {
             className="flex items-center gap-2 bg-orange-500 hover:bg-orange-600 disabled:bg-orange-300 text-white px-4 py-2 rounded-lg transition shadow-sm font-medium text-sm"
           >
             {isProcessing ? <Loader2 size={18} className="animate-spin" /> : <Upload size={18} />}
-            {isProcessing ? 'Traitement en cours...' : 'Importer des étiquettes'}
+            {isProcessing ? 'Traitement en cours...' : `Importer des ${text.plural}`}
           </button>
         </div>
       </header>
@@ -249,8 +283,8 @@ export const LabelsView: React.FC = () => {
         {/* Statistiques rapides */}
         <div className="grid grid-cols-4 gap-4">
           <div className="bg-white p-5 rounded-xl shadow-xs border border-gray-100">
-            <p className="text-xs text-gray-500 uppercase tracking-wider font-semibold">Total Étiquettes</p>
-            <p className="text-2xl font-bold text-gray-800 mt-1">{labels.length}</p>
+            <p className="text-xs text-gray-500 uppercase tracking-wider font-semibold">Total {text.pluralCapitalized}</p>
+            <p className="text-2xl font-bold text-gray-800 mt-1">{items.length}</p>
           </div>
           <div className="bg-white p-5 rounded-xl shadow-xs border border-gray-100">
             <p className="text-xs text-gray-500 uppercase tracking-wider font-semibold">Magasins Actifs</p>
@@ -259,13 +293,13 @@ export const LabelsView: React.FC = () => {
           <div className="bg-white p-5 rounded-xl shadow-xs border border-gray-100">
             <p className="text-xs text-gray-500 uppercase tracking-wider font-semibold">Affectées</p>
             <p className="text-2xl font-bold text-emerald-600 mt-1">
-              {labels.filter((l) => l.stores.length > 0).length}
+              {items.filter((l) => l.stores.length > 0).length}
             </p>
           </div>
           <div className="bg-white p-5 rounded-xl shadow-xs border border-gray-100">
             <p className="text-xs text-gray-500 uppercase tracking-wider font-semibold">Non Affectées</p>
             <p className="text-2xl font-bold text-amber-600 mt-1">
-              {labels.filter((l) => l.stores.length === 0).length}
+              {items.filter((l) => l.stores.length === 0).length}
             </p>
           </div>
         </div>
@@ -274,33 +308,37 @@ export const LabelsView: React.FC = () => {
         {isProcessing && (
           <div className="bg-white rounded-xl shadow-xs border border-gray-100 p-8 flex flex-col items-center justify-center text-gray-500">
             <Loader2 size={40} className="mb-3 text-orange-500 animate-spin" />
-            <p className="text-base font-medium text-gray-700">Importation des étiquettes en cours...</p>
+            <p className="text-base font-medium text-gray-700">Importation des {text.plural} en cours...</p>
           </div>
         )}
 
         {/* Barre d'actions multiples */}
-        {labels.length > 0 && (
+        {items.length > 0 && (
           <div className="bg-white p-4 rounded-xl shadow-xs border border-gray-100 flex items-center justify-between flex-wrap gap-4">
             <div className="flex items-center gap-3">
               <button
                 onClick={toggleSelectAll}
                 className="flex items-center gap-2 text-sm font-medium text-gray-700 hover:text-orange-600 transition"
               >
-                {selectedLabelIds.length === filteredLabels.length && filteredLabels.length > 0 ? (
+                {selectedItemIds.length === filteredItems.length && filteredItems.length > 0 ? (
                   <CheckSquare size={18} className="text-orange-500" />
                 ) : (
                   <Square size={18} className="text-gray-400" />
                 )}
-                Tout sélectionner ({selectedLabelIds.length}/{filteredLabels.length})
+                Tout sélectionner ({selectedItemIds.length}/{filteredItems.length})
               </button>
             </div>
 
             {/* Affectation en masse + impression de la sélection */}
             <div className="flex items-center gap-2">
-              <BatchStoreAssignPopover selectedLabelIds={selectedLabelIds} />
+              <BatchStoreAssignPopover
+                selectedLabelIds={selectedItemIds}
+                onAssign={assignStoresToItems}
+                onRemove={removeStoresFromItems}
+              />
               <button
                 onClick={handleGenerateSelectionPDF}
-                disabled={selectedLabelIds.length === 0 || isGeneratingPDF}
+                disabled={selectedItemIds.length === 0 || isGeneratingPDF}
                 className="bg-slate-900 hover:bg-slate-800 disabled:bg-gray-200 text-white px-4 py-1.5 rounded-lg text-sm font-medium transition shadow-xs whitespace-nowrap flex items-center gap-1.5"
               >
                 {isGeneratingPDF ? <Loader2 size={15} className="animate-spin" /> : <Printer size={15} />}
@@ -310,8 +348,8 @@ export const LabelsView: React.FC = () => {
           </div>
         )}
 
-        {/* Grille des étiquettes ou Zone d'import vide */}
-        {labels.length === 0 && !isProcessing ? (
+        {/* Grille des items ou Zone d'import vide */}
+        {items.length === 0 && !isProcessing ? (
           <div
             onClick={handleUploadClick}
             className="bg-white rounded-xl shadow-xs border border-gray-200 p-16 flex flex-col items-center justify-center text-gray-400 border-dashed cursor-pointer hover:border-orange-400 hover:bg-orange-50/20 transition group"
@@ -319,34 +357,34 @@ export const LabelsView: React.FC = () => {
             <div className="p-4 rounded-full bg-orange-50 text-orange-500 mb-4 group-hover:scale-110 transition duration-300">
               <Upload size={32} />
             </div>
-            <p className="text-lg font-semibold text-gray-700">Glissez-déposez vos étiquettes (JPG/PNG) ou PDF ici</p>
+            <p className="text-lg font-semibold text-gray-700">Glissez-déposez vos {text.plural} (JPG/PNG) ou PDF ici</p>
             <p className="text-sm text-gray-400 mt-1">Cliquez pour parcourir (Nom de fichier = Référence automatique)</p>
           </div>
-        ) : filteredLabels.length === 0 ? (
+        ) : filteredItems.length === 0 ? (
           <div className="bg-white rounded-xl shadow-xs border border-gray-200 p-16 flex flex-col items-center justify-center text-gray-400">
             <Store size={32} className="mb-3 text-gray-300" />
             <p className="text-base font-medium text-gray-600">
               {storeFilterName
-                ? `Aucune étiquette affectée à « ${storeFilterName} ».`
-                : 'Aucune étiquette ne correspond à cette recherche.'}
+                ? `Aucun${itemType === 'fanions' ? '' : 'e'} ${text.singular} affecté${itemType === 'fanions' ? '' : 'e'} à « ${storeFilterName} ».`
+                : `Aucun${itemType === 'fanions' ? '' : 'e'} ${text.singular} ne correspond à cette recherche.`}
             </p>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-            {filteredLabels.map((label) => {
-              const isSelected = selectedLabelIds.includes(label.id);
-              const initialImageSrc = label.thumbnailUrl || label.imageUrl || `${import.meta.env.BASE_URL}labels/${label.reference}.jpg`;
+            {filteredItems.map((item) => {
+              const isSelected = selectedItemIds.includes(item.id);
+              const initialImageSrc = item.thumbnailUrl || item.imageUrl || `${import.meta.env.BASE_URL}${text.folder}/${item.reference}.jpg`;
 
               return (
                 <div
-                  key={label.id}
+                  key={item.id}
                   className={`bg-white rounded-xl border transition shadow-xs flex flex-col overflow-hidden ${isSelected ? 'border-orange-500 ring-2 ring-orange-500/20' : 'border-gray-200 hover:border-gray-300'}`}
                 >
-                  {/* Visuel complet de l'étiquette */}
+                  {/* Visuel complet de l'item */}
                   <div className="relative bg-slate-100 p-2 flex items-center justify-center border-b border-gray-100 h-48">
                     {/* Checkbox de sélection - BIEN VISIBLE & CONTRASTÉE */}
                     <button
-                      onClick={() => toggleSelectLabel(label.id)}
+                      onClick={() => toggleSelectItem(item.id)}
                       className={`absolute top-2.5 left-2.5 z-10 p-1 rounded-md bg-white shadow-md border transition-all ${isSelected
                           ? 'border-orange-500 text-orange-500 bg-orange-50'
                           : 'border-gray-300 text-gray-500 hover:border-orange-500 hover:text-orange-500'
@@ -360,18 +398,18 @@ export const LabelsView: React.FC = () => {
                       )}
                     </button>
 
-                    {/* Image de l'étiquette avec fallback automatique */}
+                    {/* Image de l'item avec fallback automatique */}
                     <img
                       src={initialImageSrc}
-                      alt={label.reference}
+                      alt={item.reference}
                       onError={(e: React.SyntheticEvent<HTMLImageElement>) => {
                         const target = e.currentTarget;
                         if (!target.dataset['triedLabels']) {
                           target.dataset['triedLabels'] = 'true';
-                          target.src = `${import.meta.env.BASE_URL}labels/${label.reference}.jpg`;
+                          target.src = `${import.meta.env.BASE_URL}${text.folder}/${item.reference}.jpg`;
                         } else if (!target.dataset['triedRoot']) {
                           target.dataset['triedRoot'] = 'true';
-                          target.src = `${import.meta.env.BASE_URL}${label.reference}.jpg`;
+                          target.src = `${import.meta.env.BASE_URL}${item.reference}.jpg`;
                         }
                       }}
                       className="h-full w-full object-contain rounded bg-white p-1 shadow-xs border border-gray-200"
@@ -385,8 +423,8 @@ export const LabelsView: React.FC = () => {
                         <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">Référence produit</label>
                         <input
                           type="text"
-                          value={label.reference}
-                          onChange={(e) => updateLabel(label.id, { reference: e.target.value })}
+                          value={item.reference}
+                          onChange={(e) => updateItem(item.id, { reference: e.target.value })}
                           className="w-full font-mono font-bold text-gray-800 bg-gray-50 border border-gray-200 rounded px-2.5 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 transition"
                           placeholder="Référence..."
                         />
@@ -397,10 +435,10 @@ export const LabelsView: React.FC = () => {
                           type="text"
                           inputMode="numeric"
                           maxLength={2}
-                          value={label.quantity ?? 1}
+                          value={item.quantity ?? 1}
                           onChange={(e) => {
                             const digitsOnly = e.target.value.replace(/\D/g, '').slice(0, 2);
-                            updateLabel(label.id, { quantity: digitsOnly === '' ? 1 : Number(digitsOnly) });
+                            updateItem(item.id, { quantity: digitsOnly === '' ? 1 : Number(digitsOnly) });
                           }}
                           placeholder="1"
                           className="w-full text-center font-mono font-bold text-gray-800 bg-gray-50 border border-gray-200 rounded px-2.5 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 transition"
@@ -412,10 +450,10 @@ export const LabelsView: React.FC = () => {
                     <div>
                       <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Magasins assignés</p>
                       <div className="flex flex-wrap gap-1 min-h-[28px] items-center">
-                        {label.stores.length === 0 ? (
+                        {item.stores.length === 0 ? (
                           <span className="text-xs text-gray-400 italic">Aucun magasin</span>
                         ) : (
-                          label.stores.map((storeId) => {
+                          item.stores.map((storeId) => {
                             const storeObj = stores.find((s) => s.id === storeId);
                             if (!storeObj) return null;
                             return (
@@ -425,7 +463,7 @@ export const LabelsView: React.FC = () => {
                               >
                                 {storeObj.name}
                                 <button
-                                  onClick={() => updateLabel(label.id, { stores: label.stores.filter((id) => id !== storeId) })}
+                                  onClick={() => updateItem(item.id, { stores: item.stores.filter((id) => id !== storeId) })}
                                   className="hover:text-red-600 transition ml-0.5"
                                 >
                                   &times;
@@ -440,14 +478,14 @@ export const LabelsView: React.FC = () => {
                     {/* Actions rapides par carte */}
                     <div className="pt-2 border-t border-gray-100 flex items-center justify-between">
                       <StoreAssignPopover
-                        labelId={label.id}
-                        assignedStoreIds={label.stores}
+                        assignedStoreIds={item.stores}
+                        onChangeStores={(newStoreIds) => updateItem(item.id, { stores: newStoreIds })}
                       />
 
                       <button
-                        onClick={() => deleteLabel(label.id)}
+                        onClick={() => deleteItem(item.id)}
                         className="text-gray-400 hover:text-red-500 transition p-1"
-                        title="Supprimer l'étiquette"
+                        title={itemType === 'fanions' ? 'Supprimer le fanion' : "Supprimer l'étiquette"}
                       >
                         <Trash2 size={16} />
                       </button>
