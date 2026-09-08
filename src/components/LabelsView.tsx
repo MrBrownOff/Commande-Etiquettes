@@ -6,32 +6,92 @@ import { BatchStoreAssignPopover } from './BatchStoreAssignPopover';
 import { generatePrinterPDF, PrintableKind } from '../utils/printerExport';
 
 interface LabelsViewProps {
-  // Catégorie d'items gérée par cette instance de la vue : "labels" (étiquettes) ou
-  // "propack" (Pro-Pack). Les deux catégories partagent exactement le même
-  // composant/comportement, mais opèrent sur des collections Firestore, dossiers
-  // d'assets et historiques d'impression totalement indépendants (voir store.ts et
-  // printerExport.ts).
+  // Catégorie d'items gérée par cette instance de la vue : "labels" (étiquettes),
+  // "propack" (Pro-Pack) ou "fanions" (Fanions). Les trois catégories partagent
+  // exactement le même composant/comportement, mais opèrent sur des collections
+  // Firestore, dossiers d'assets et historiques d'impression totalement
+  // indépendants (voir store.ts et printerExport.ts).
   itemType?: PrintableKind;
 }
 
-const TYPE_TEXT: Record<PrintableKind, { singular: string; plural: string; pluralCapitalized: string; folder: string }> = {
-  labels: { singular: 'étiquette', plural: 'étiquettes', pluralCapitalized: 'Étiquettes', folder: 'labels' },
-  propack: { singular: 'Pro-Pack', plural: 'Pro-Pack', pluralCapitalized: 'Pro-Pack', folder: 'pro-pack' },
+const TYPE_TEXT: Record<
+  PrintableKind,
+  { singular: string; plural: string; pluralCapitalized: string; folder: string; elisionE: string; deleteTitle: string }
+> = {
+  labels: {
+    singular: 'étiquette',
+    plural: 'étiquettes',
+    pluralCapitalized: 'Étiquettes',
+    folder: 'labels',
+    elisionE: 'e',
+    deleteTitle: "Supprimer l'étiquette",
+  },
+  propack: {
+    singular: 'Pro-Pack',
+    plural: 'Pro-Pack',
+    pluralCapitalized: 'Pro-Pack',
+    folder: 'pro-pack',
+    elisionE: '',
+    deleteTitle: 'Supprimer le Pro-Pack',
+  },
+  fanions: {
+    singular: 'fanion',
+    plural: 'fanions',
+    pluralCapitalized: 'Fanions',
+    folder: 'fanions',
+    elisionE: '',
+    deleteTitle: 'Supprimer le fanion',
+  },
 };
 
 export const LabelsView: React.FC<LabelsViewProps> = ({ itemType = 'labels' }) => {
   const store = useAppStore();
   const text = TYPE_TEXT[itemType];
 
-  const items = itemType === 'propack' ? store.proPack : store.labels;
+  const ACTIONS = {
+    labels: {
+      items: store.labels,
+      addItemsBatch: store.addLabelsBatch,
+      updateItem: store.updateLabel,
+      deleteItem: store.deleteLabel,
+      clearItems: store.clearLabels,
+      assignStoresToItems: store.assignStoresToLabels,
+      removeStoresFromItems: store.removeStoresFromLabels,
+      logRun: store.logPrintRun,
+    },
+    propack: {
+      items: store.proPack,
+      addItemsBatch: store.addProPackBatch,
+      updateItem: store.updateProPackItem,
+      deleteItem: store.deleteProPackItem,
+      clearItems: store.clearProPack,
+      assignStoresToItems: store.assignStoresToProPack,
+      removeStoresFromItems: store.removeStoresFromProPack,
+      logRun: store.logProPackPrintRun,
+    },
+    fanions: {
+      items: store.fanions,
+      addItemsBatch: store.addFanionsBatch,
+      updateItem: store.updateFanionsItem,
+      deleteItem: store.deleteFanionsItem,
+      clearItems: store.clearFanions,
+      assignStoresToItems: store.assignStoresToFanions,
+      removeStoresFromItems: store.removeStoresFromFanions,
+      logRun: store.logFanionsPrintRun,
+    },
+  };
+
   const { stores } = store;
-  const addItemsBatch = itemType === 'propack' ? store.addProPackBatch : store.addLabelsBatch;
-  const updateItem = itemType === 'propack' ? store.updateProPackItem : store.updateLabel;
-  const deleteItem = itemType === 'propack' ? store.deleteProPackItem : store.deleteLabel;
-  const clearItems = itemType === 'propack' ? store.clearProPack : store.clearLabels;
-  const assignStoresToItems = itemType === 'propack' ? store.assignStoresToProPack : store.assignStoresToLabels;
-  const removeStoresFromItems = itemType === 'propack' ? store.removeStoresFromProPack : store.removeStoresFromLabels;
-  const logRun = itemType === 'propack' ? store.logProPackPrintRun : store.logPrintRun;
+  const {
+    items,
+    addItemsBatch,
+    updateItem,
+    deleteItem,
+    clearItems,
+    assignStoresToItems,
+    removeStoresFromItems,
+    logRun,
+  } = ACTIONS[itemType];
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -366,8 +426,8 @@ export const LabelsView: React.FC<LabelsViewProps> = ({ itemType = 'labels' }) =
             <Store size={32} className="mb-3 text-gray-300" />
             <p className="text-base font-medium text-gray-600">
               {storeFilterName
-                ? `Aucun${itemType === 'propack' ? '' : 'e'} ${text.singular} affecté${itemType === 'propack' ? '' : 'e'} à « ${storeFilterName} ».`
-                : `Aucun${itemType === 'propack' ? '' : 'e'} ${text.singular} ne correspond à cette recherche.`}
+                ? `Aucun${text.elisionE} ${text.singular} affecté${text.elisionE} à « ${storeFilterName} ».`
+                : `Aucun${text.elisionE} ${text.singular} ne correspond à cette recherche.`}
             </p>
           </div>
         ) : (
@@ -486,7 +546,7 @@ export const LabelsView: React.FC<LabelsViewProps> = ({ itemType = 'labels' }) =
                       <button
                         onClick={() => deleteItem(item.id)}
                         className="text-gray-400 hover:text-red-500 transition p-1"
-                        title={itemType === 'propack' ? 'Supprimer le Pro-Pack' : "Supprimer l'étiquette"}
+                        title={text.deleteTitle}
                       >
                         <Trash2 size={16} />
                       </button>
