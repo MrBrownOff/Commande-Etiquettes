@@ -23,10 +23,12 @@ const getBannerName = (store: StoreItem): string => {
 
 interface BatchStoreAssignPopoverProps {
   selectedLabelIds: string[];
+  onAssign: (itemIds: string[], storeIds: string[]) => void;
+  onRemove: (itemIds: string[], storeIds: string[]) => void;
 }
 
-export const BatchStoreAssignPopover: React.FC<BatchStoreAssignPopoverProps> = ({ selectedLabelIds }) => {
-  const { stores, assignStoresToLabels, removeStoresFromLabels } = useAppStore();
+export const BatchStoreAssignPopover: React.FC<BatchStoreAssignPopoverProps> = ({ selectedLabelIds, onAssign, onRemove }) => {
+  const { stores } = useAppStore();
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [selectedTargetStoreIds, setSelectedTargetStoreIds] = useState<string[]>([]);
@@ -85,14 +87,14 @@ export const BatchStoreAssignPopover: React.FC<BatchStoreAssignPopoverProps> = (
 
   const handleApplyBatch = () => {
     if (selectedTargetStoreIds.length === 0 || selectedLabelIds.length === 0) return;
-    assignStoresToLabels(selectedLabelIds, selectedTargetStoreIds);
+    onAssign(selectedLabelIds, selectedTargetStoreIds);
     setSelectedTargetStoreIds([]);
     setIsOpen(false);
   };
 
   const handleRemoveBatch = () => {
     if (selectedTargetStoreIds.length === 0 || selectedLabelIds.length === 0) return;
-    removeStoresFromLabels(selectedLabelIds, selectedTargetStoreIds);
+    onRemove(selectedLabelIds, selectedTargetStoreIds);
     setSelectedTargetStoreIds([]);
     setIsOpen(false);
   };

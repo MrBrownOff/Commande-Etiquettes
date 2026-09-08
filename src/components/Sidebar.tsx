@@ -1,16 +1,16 @@
 // src/components/Sidebar.tsx
 import React from 'react';
-import { LayoutDashboard, Store, Save, Download, LogOut } from 'lucide-react';
+import { LayoutDashboard, Flag, Store, Save, Download, LogOut } from 'lucide-react';
 import { useAppStore } from '../store/store';
 import { signOutUser } from './AuthGate';
 
 interface SidebarProps {
-  currentTab: 'labels' | 'stores' | 'project';
-  setCurrentTab: (tab: 'labels' | 'stores' | 'project') => void;
+  currentTab: 'labels' | 'fanions' | 'stores' | 'project';
+  setCurrentTab: (tab: 'labels' | 'fanions' | 'stores' | 'project') => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ currentTab, setCurrentTab }) => {
-  const { labels, stores, exportProject } = useAppStore();
+  const { labels, fanions, stores, exportProject } = useAppStore();
 
   return (
     <aside className="w-72 bg-slate-900 text-white flex flex-col shadow-lg select-none">
@@ -38,6 +38,22 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, setCurrentTab }) =
           </span>
           <span className="text-xs bg-slate-800 px-2 py-0.5 rounded-full text-slate-300">
             {labels.length}
+          </span>
+        </button>
+
+        <button
+          onClick={() => setCurrentTab('fanions')}
+          className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-lg font-medium text-sm transition ${currentTab === 'fanions'
+            ? 'bg-orange-500 text-white shadow-sm'
+            : 'text-slate-300 hover:bg-slate-800'
+            }`}
+        >
+          <span className="flex items-center gap-3">
+            <Flag size={18} />
+            Fanions
+          </span>
+          <span className="text-xs bg-slate-800 px-2 py-0.5 rounded-full text-slate-300">
+            {fanions.length}
           </span>
         </button>
 

@@ -28,12 +28,12 @@ const getBannerName = (store: StoreItem): string => {
 };
 
 interface StoreAssignPopoverProps {
-  labelId: string;
   assignedStoreIds: string[];
+  onChangeStores: (newStoreIds: string[]) => void;
 }
 
-export const StoreAssignPopover: React.FC<StoreAssignPopoverProps> = ({ labelId, assignedStoreIds }) => {
-  const { stores, updateLabel } = useAppStore();
+export const StoreAssignPopover: React.FC<StoreAssignPopoverProps> = ({ assignedStoreIds, onChangeStores }) => {
+  const { stores } = useAppStore();
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState('');
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -78,7 +78,7 @@ export const StoreAssignPopover: React.FC<StoreAssignPopoverProps> = ({ labelId,
       ? assignedStoreIds.filter(id => id !== storeId)
       : [...assignedStoreIds, storeId];
 
-    updateLabel(labelId, { stores: newStores });
+    onChangeStores(newStores);
   };
 
   // Action : Basculer toute une bannière (Cocher/Décocher tous les magasins de cette bannière)
@@ -96,7 +96,7 @@ export const StoreAssignPopover: React.FC<StoreAssignPopoverProps> = ({ labelId,
       newStores = Array.from(new Set([...assignedStoreIds, ...bannerStoreIds]));
     }
 
-    updateLabel(labelId, { stores: newStores });
+    onChangeStores(newStores);
   };
 
   return (
