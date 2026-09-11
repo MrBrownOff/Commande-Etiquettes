@@ -7,12 +7,15 @@ import {
   addDoc,
   deleteDoc,
   updateDoc,
+  setDoc,
+  getDoc,
   onSnapshot,
   getDocs,
   writeBatch,
   arrayUnion,
   arrayRemove,
   query,
+  where,
   orderBy,
   limit,
   serverTimestamp,
@@ -26,6 +29,24 @@ export interface StoreItem {
   name: string;
   banner?: string;
 }
+
+export type UserRole = 'admin' | 'representant';
+
+export interface AppUser {
+  id: string; // uid Firebase Auth
+  email: string;
+  role: UserRole;
+}
+
+// Règle d'inférence utilisée UNIQUEMENT lors de la toute première connexion d'un
+// compte, pour créer automatiquement son document de rôle sans intervention
+// manuelle : reprend la même convention que l'ancien routage par email. Les
+// règles Firestore recalculent indépendamment ce même résultat côté serveur
+// (voir firestore.rules) — un compte ne peut donc jamais s'auto-attribuer un
+// rôle différent de celui-ci. Un admin peut ensuite corriger le rôle à tout
+// moment depuis le panneau « Accès ».
+export const inferRoleFromEmail = (email?: string | null): UserRole =>
+  (email ?? '').toLowerCase().includes('representant') ? 'representant' : 'admin';
 
 // Représente un item imprimable (étiquette ou Pro-Pack) : même structure pour les deux
 // catégories, qui vivent chacune dans leur propre collection Firestore indépendante.
@@ -85,6 +106,23 @@ interface AppState {
   fanionsPrintHistory: PrintHistoryEntry[];
   isLoading: boolean;
 
+  // Quantités personnelles des représentants : chaque représentant a ses propres
+  // quantités par item, indépendantes de celles des autres représentants et de
+  // celles utilisées côté équipe interne (voir REP_QUANTITIES_*_COLLECTION plus bas).
+  repQuantitiesLabels: Record<string, number>;
+  repQuantitiesProPack: Record<string, number>;
+  repQuantitiesFanions: Record<string, number>;
+  setRepQuantityLabels: (itemId: string, quantity: number) => void;
+  setRepQuantityProPack: (itemId: string, quantity: number) => void;
+  setRepQuantityFanions: (itemId: string, quantity: number) => void;
+
+  // Rôle du compte connecté (voir inferRoleFromEmail ci-dessus) et, pour un
+  // admin uniquement, la liste des comptes déjà connectés au moins une fois
+  // (alimente le panneau « Accès »).
+  userRole: UserRole | null;
+  users: AppUser[];
+  updateUserRole: (uid: string, role: UserRole) => Promise<void>;
+
   // Actions Magasins
   addStore: (name: string, banner?: string) => Promise<void>;
   addStoresBatch: (stores: (string | { name: string; banner?: string })[]) => Promise<void>;
@@ -137,6 +175,20 @@ const PRINT_HISTORY_COLLECTION = 'printHistory';
 const PROPACK_PRINT_HISTORY_COLLECTION = 'proPackPrintHistory';
 const FANIONS_PRINT_HISTORY_COLLECTION = 'fanionsItemsPrintHistory';
 const PRINT_HISTORY_LIMIT = 50;
+
+// Quantités personnelles des représentants, une collection par catégorie : chaque
+// document est identifié par `${uid}_${itemId}` et ne contient que la quantité de
+// CE représentant pour CET item — jamais lue ni écrite par un autre représentant
+// ni par l'équipe interne, ce qui rend chaque commande de représentant totalement
+// indépendante du catalogue partagé (item.quantity) et des autres représentants.
+const REP_QUANTITIES_LABELS_COLLECTION = 'repQuantitiesLabels';
+const REP_QUANTITIES_PROPACK_COLLECTION = 'repQuantitiesProPack';
+const REP_QUANTITIES_FANIONS_COLLECTION = 'repQuantitiesFanions';
+
+// Un document par compte (id = uid), créé automatiquement à la première
+// connexion (voir startRoleSync) : porte le rôle qui détermine à la fois la
+// vue affichée et, côté serveur, ce que le compte a le droit d'écrire.
+const USERS_COLLECTION = 'users';
 
 // Anciens noms de collection utilisés avant le renommage "Fanions" -> "Pro-Pack" :
 // on y migre automatiquement une seule fois (voir startFirestoreSync) pour ne pas
@@ -231,7 +283,38 @@ const migrateLegacyCollection = async (fromCollection: string, toCollection: str
 const pendingLabelWrites = new Map<string, ReturnType<typeof setTimeout>>();
 const pendingProPackWrites = new Map<string, ReturnType<typeof setTimeout>>();
 const pendingFanionsWrites = new Map<string, ReturnType<typeof setTimeout>>();
+const pendingRepQuantityWrites = new Map<string, ReturnType<typeof setTimeout>>();
 const LABEL_WRITE_DEBOUNCE_MS = 500;
+
+// Écrit la quantité personnelle d'un représentant pour un item donné, dans la
+// collection dédiée à la catégorie. Le document (identifié par `${uid}_${itemId}`)
+// peut ne pas encore exister (setDoc + merge au lieu de updateDoc), et le filtrage
+// par uid côté lecture (voir startFirestoreSync) garantit qu'aucun autre
+// utilisateur ne voit ou n'écrase cette valeur.
+const setRepQuantityTo = (
+  collectionName: string,
+  stateKey: 'repQuantitiesLabels' | 'repQuantitiesProPack' | 'repQuantitiesFanions',
+  itemId: string,
+  quantity: number
+) => {
+  const uid = auth.currentUser?.uid;
+  if (!uid) return;
+
+  useAppStore.setState((state) => ({
+    [stateKey]: { ...state[stateKey], [itemId]: quantity },
+  }));
+
+  const debounceKey = `${collectionName}:${itemId}`;
+  const existingTimeout = pendingRepQuantityWrites.get(debounceKey);
+  if (existingTimeout) clearTimeout(existingTimeout);
+  pendingRepQuantityWrites.set(
+    debounceKey,
+    setTimeout(() => {
+      pendingRepQuantityWrites.delete(debounceKey);
+      setDoc(doc(db, collectionName, `${uid}_${itemId}`), { uid, itemId, quantity }, { merge: true }).catch(() => {});
+    }, LABEL_WRITE_DEBOUNCE_MS)
+  );
+};
 
 export const useAppStore = create<AppState>()((set, get) => ({
   labels: [],
@@ -242,6 +325,22 @@ export const useAppStore = create<AppState>()((set, get) => ({
   proPackPrintHistory: [],
   fanionsPrintHistory: [],
   isLoading: true,
+
+  repQuantitiesLabels: {},
+  repQuantitiesProPack: {},
+  repQuantitiesFanions: {},
+  setRepQuantityLabels: (itemId, quantity) =>
+    setRepQuantityTo(REP_QUANTITIES_LABELS_COLLECTION, 'repQuantitiesLabels', itemId, quantity),
+  setRepQuantityProPack: (itemId, quantity) =>
+    setRepQuantityTo(REP_QUANTITIES_PROPACK_COLLECTION, 'repQuantitiesProPack', itemId, quantity),
+  setRepQuantityFanions: (itemId, quantity) =>
+    setRepQuantityTo(REP_QUANTITIES_FANIONS_COLLECTION, 'repQuantitiesFanions', itemId, quantity),
+
+  userRole: null,
+  users: [],
+  updateUserRole: async (uid, role) => {
+    await updateDoc(doc(db, USERS_COLLECTION, uid), { role });
+  },
 
   addStore: async (name, banner) => {
     const id = crypto.randomUUID();
@@ -478,16 +577,80 @@ let unsubscribeFanions: (() => void) | null = null;
 let unsubscribePrintHistory: (() => void) | null = null;
 let unsubscribeProPackPrintHistory: (() => void) | null = null;
 let unsubscribeFanionsPrintHistory: (() => void) | null = null;
+let unsubscribeRepQuantitiesLabels: (() => void) | null = null;
+let unsubscribeRepQuantitiesProPack: (() => void) | null = null;
+let unsubscribeRepQuantitiesFanions: (() => void) | null = null;
+let userRoleLoaded = false;
+let unsubscribeOwnUserDoc: (() => void) | null = null;
+let unsubscribeUsers: (() => void) | null = null;
 
 const markLoadedIfReady = () => {
-  if (storesLoaded && labelsLoaded && proPackLoaded && fanionsLoaded) {
+  if (storesLoaded && labelsLoaded && proPackLoaded && fanionsLoaded && userRoleLoaded) {
     useAppStore.setState({ isLoading: false });
   }
 };
 
+// Garantit que le document de rôle du compte existe AVANT de démarrer le
+// reste de la synchronisation Firestore (startFirestoreSync peut, à la toute
+// première connexion sur un projet vide, déclencher une écriture réservée
+// aux admins — l'amorçage des magasins par défaut). Sans cette étape
+// bloquante, cette écriture pourrait partir avant que users/{uid} n'existe
+// et être refusée par isAdmin() côté règles.
+const ensureUserRoleDoc = async (uid: string, email: string | null): Promise<void> => {
+  const ref = doc(db, USERS_COLLECTION, uid);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) {
+    await setDoc(ref, { email: email ?? '', role: inferRoleFromEmail(email) });
+  }
+};
+
+// Abonnement en continu au rôle du compte connecté (pris en compte sans
+// re-login si un admin le modifie depuis le panneau « Accès »). Seul un admin
+// a en plus besoin de la liste complète des comptes (alimente ce panneau),
+// donc on ne s'y abonne que dans ce cas pour ne jamais tenter une lecture
+// refusée côté représentant.
+const startRoleSync = (uid: string) => {
+  userRoleLoaded = false;
+
+  unsubscribeOwnUserDoc = onSnapshot(
+    doc(db, USERS_COLLECTION, uid),
+    (snap) => {
+      if (!snap.exists()) return; // création en cours (voir ensureUserRoleDoc)
+
+      const data = snap.data() as { role: UserRole; email?: string };
+      useAppStore.setState({ userRole: data.role });
+      userRoleLoaded = true;
+      markLoadedIfReady();
+
+      if (data.role === 'admin' && !unsubscribeUsers) {
+        unsubscribeUsers = onSnapshot(
+          collection(db, USERS_COLLECTION),
+          (usersSnap) => {
+            const users = usersSnap.docs.map((d) => ({ id: d.id, ...d.data() }) as AppUser);
+            useAppStore.setState({ users });
+          },
+          (error) => console.error('Erreur de synchronisation des comptes :', error)
+        );
+      }
+    },
+    (error) => console.error('Erreur de synchronisation du rôle :', error)
+  );
+};
+
+const stopRoleSync = () => {
+  unsubscribeOwnUserDoc?.();
+  unsubscribeUsers?.();
+  unsubscribeOwnUserDoc = null;
+  unsubscribeUsers = null;
+  userRoleLoaded = false;
+  useAppStore.setState({ userRole: null, users: [] });
+};
+
 // La synchronisation Firestore ne démarre qu'une fois l'utilisateur authentifié
 // (les règles de sécurité exigent request.auth != null) et s'arrête à la déconnexion.
-const startFirestoreSync = () => {
+// `uid` sert à filtrer les quantités personnelles des représentants (voir plus bas)
+// pour que chacun ne charge et ne voie jamais que les siennes.
+const startFirestoreSync = (uid: string) => {
   storesLoaded = false;
   labelsLoaded = false;
   proPackLoaded = false;
@@ -591,6 +754,48 @@ const startFirestoreSync = () => {
     },
     (error) => console.error("Erreur de synchronisation de l'historique d'impression Fanions :", error)
   );
+
+  // Quantités personnelles des représentants : filtrées par uid dès la requête
+  // Firestore (pas seulement côté affichage), pour que ce représentant ne
+  // reçoive jamais les quantités d'un autre représentant.
+  unsubscribeRepQuantitiesLabels = onSnapshot(
+    query(collection(db, REP_QUANTITIES_LABELS_COLLECTION), where('uid', '==', uid)),
+    (snapshot) => {
+      const repQuantitiesLabels: Record<string, number> = {};
+      snapshot.docs.forEach((d) => {
+        const data = d.data() as { itemId: string; quantity: number };
+        repQuantitiesLabels[data.itemId] = data.quantity;
+      });
+      useAppStore.setState({ repQuantitiesLabels });
+    },
+    (error) => console.error('Erreur de synchronisation des quantités personnelles (Étiquettes) :', error)
+  );
+
+  unsubscribeRepQuantitiesProPack = onSnapshot(
+    query(collection(db, REP_QUANTITIES_PROPACK_COLLECTION), where('uid', '==', uid)),
+    (snapshot) => {
+      const repQuantitiesProPack: Record<string, number> = {};
+      snapshot.docs.forEach((d) => {
+        const data = d.data() as { itemId: string; quantity: number };
+        repQuantitiesProPack[data.itemId] = data.quantity;
+      });
+      useAppStore.setState({ repQuantitiesProPack });
+    },
+    (error) => console.error('Erreur de synchronisation des quantités personnelles (Pro-Pack) :', error)
+  );
+
+  unsubscribeRepQuantitiesFanions = onSnapshot(
+    query(collection(db, REP_QUANTITIES_FANIONS_COLLECTION), where('uid', '==', uid)),
+    (snapshot) => {
+      const repQuantitiesFanions: Record<string, number> = {};
+      snapshot.docs.forEach((d) => {
+        const data = d.data() as { itemId: string; quantity: number };
+        repQuantitiesFanions[data.itemId] = data.quantity;
+      });
+      useAppStore.setState({ repQuantitiesFanions });
+    },
+    (error) => console.error('Erreur de synchronisation des quantités personnelles (Fanions) :', error)
+  );
 };
 
 const stopFirestoreSync = () => {
@@ -601,6 +806,9 @@ const stopFirestoreSync = () => {
   unsubscribePrintHistory?.();
   unsubscribeProPackPrintHistory?.();
   unsubscribeFanionsPrintHistory?.();
+  unsubscribeRepQuantitiesLabels?.();
+  unsubscribeRepQuantitiesProPack?.();
+  unsubscribeRepQuantitiesFanions?.();
   unsubscribeStores = null;
   unsubscribeLabels = null;
   unsubscribeProPack = null;
@@ -608,6 +816,9 @@ const stopFirestoreSync = () => {
   unsubscribePrintHistory = null;
   unsubscribeProPackPrintHistory = null;
   unsubscribeFanionsPrintHistory = null;
+  unsubscribeRepQuantitiesLabels = null;
+  unsubscribeRepQuantitiesProPack = null;
+  unsubscribeRepQuantitiesFanions = null;
   defaultStoresSeeded = false;
   useAppStore.setState({
     labels: [],
@@ -617,14 +828,23 @@ const stopFirestoreSync = () => {
     printHistory: [],
     proPackPrintHistory: [],
     fanionsPrintHistory: [],
+    repQuantitiesLabels: {},
+    repQuantitiesProPack: {},
+    repQuantitiesFanions: {},
     isLoading: true,
   });
 };
 
 onAuthStateChanged(auth, (user) => {
   if (user) {
-    startFirestoreSync();
+    ensureUserRoleDoc(user.uid, user.email)
+      .catch((error) => console.error('Erreur de création du rôle :', error))
+      .finally(() => {
+        startFirestoreSync(user.uid);
+        startRoleSync(user.uid);
+      });
   } else {
     stopFirestoreSync();
+    stopRoleSync();
   }
 });

@@ -1,16 +1,16 @@
 // src/components/Sidebar.tsx
 import React from 'react';
-import { LayoutDashboard, Flag, Bookmark, Store, Save, Download, LogOut } from 'lucide-react';
+import { LayoutDashboard, Flag, Bookmark, Store, Users, Save, Download, LogOut } from 'lucide-react';
 import { useAppStore } from '../store/store';
 import { signOutUser } from './AuthGate';
 
 interface SidebarProps {
-  currentTab: 'labels' | 'propack' | 'fanions' | 'stores' | 'project';
-  setCurrentTab: (tab: 'labels' | 'propack' | 'fanions' | 'stores' | 'project') => void;
+  currentTab: 'labels' | 'propack' | 'fanions' | 'stores' | 'access' | 'project';
+  setCurrentTab: (tab: 'labels' | 'propack' | 'fanions' | 'stores' | 'access' | 'project') => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ currentTab, setCurrentTab }) => {
-  const { labels, proPack, fanions, stores, exportProject } = useAppStore();
+  const { labels, proPack, fanions, stores, users, exportProject } = useAppStore();
 
   return (
     <aside className="w-72 bg-slate-900 text-white flex flex-col shadow-lg select-none">
@@ -86,6 +86,22 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, setCurrentTab }) =
           </span>
           <span className="text-xs bg-slate-800 px-2 py-0.5 rounded-full text-slate-300">
             {stores.length}
+          </span>
+        </button>
+
+        <button
+          onClick={() => setCurrentTab('access')}
+          className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-lg font-medium text-sm transition ${currentTab === 'access'
+            ? 'bg-orange-500 text-white shadow-sm'
+            : 'text-slate-300 hover:bg-slate-800'
+            }`}
+        >
+          <span className="flex items-center gap-3">
+            <Users size={18} />
+            Accès
+          </span>
+          <span className="text-xs bg-slate-800 px-2 py-0.5 rounded-full text-slate-300">
+            {users.length}
           </span>
         </button>
 

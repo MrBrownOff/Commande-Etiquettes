@@ -1,0 +1,95 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Un admin est un compte dont le document users/{uid} porte role == 'admin'.
+    function isAdmin() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // Même convention que l'ancien routage par email (voir inferRoleFromEmail
+    // dans store.ts), recalculée ici côté serveur : garantit qu'un compte ne
+    // peut jamais s'auto-attribuer un rôle différent à sa création.
+    function inferredRoleFromEmail() {
+      return request.auth.token.email.lower().matches('.*representant.*') ? 'representant' : 'admin';
+    }
+
+    // Rôles des comptes : chacun peut créer SON PROPRE document au premier
+    // login (avec le rôle imposé par la fonction ci-dessus), mais seul un
+    // admin peut ensuite le modifier — empêche une auto-promotion.
+    match /users/{uid} {
+      allow get: if isSignedIn() && (request.auth.uid == uid || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isSignedIn() && request.auth.uid == uid
+                    && request.resource.data.role == inferredRoleFromEmail();
+      allow update, delete: if isAdmin();
+    }
+
+    // Quantités personnelles des représentants (une collection par
+    // catégorie) : chacun ne lit/écrit que ses propres documents, identifiés
+    // par le champ uid qu'ils portent.
+    match /repQuantitiesLabels/{docId} {
+      allow read: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow create, update: if isSignedIn() && request.resource.data.uid == request.auth.uid;
+    }
+    match /repQuantitiesProPack/{docId} {
+      allow read: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow create, update: if isSignedIn() && request.resource.data.uid == request.auth.uid;
+    }
+    match /repQuantitiesFanions/{docId} {
+      allow read: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow create, update: if isSignedIn() && request.resource.data.uid == request.auth.uid;
+    }
+
+    // Historique d'impression : un représentant génère aussi des PDF, donc
+    // n'importe quel compte connecté peut y ajouter une entrée ; seule
+    // l'équipe interne consulte l'historique (Sauvegarde/Projet).
+    match /printHistory/{docId} {
+      allow read, create: if isSignedIn();
+      allow update, delete: if isAdmin();
+    }
+    match /proPackPrintHistory/{docId} {
+      allow read, create: if isSignedIn();
+      allow update, delete: if isAdmin();
+    }
+    match /fanionsItemsPrintHistory/{docId} {
+      allow read, create: if isSignedIn();
+      allow update, delete: if isAdmin();
+    }
+
+    // Catalogues (étiquettes, Pro-Pack, Fanions) et magasins : lecture pour
+    // tout compte connecté (nécessaire à l'impression côté représentants),
+    // écriture (import, suppression, affectation) réservée à l'équipe interne.
+    match /labels/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+    match /proPack/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+    match /fanionsItems/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+    match /stores/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Repli pour toute autre collection (dont les anciennes collections
+    // "fanions"/"fanionPrintHistory", utilisées une seule fois par la
+    // migration automatique vers Pro-Pack) : lecture pour tout compte
+    // connecté, écriture réservée à l'équipe interne.
+    match /{document=**} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+  }
+}

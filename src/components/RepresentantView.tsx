@@ -1,6 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState, useEffect } from 'react';
 import { useAppStore } from '../store/store';
-import { Search, Loader2, CheckSquare, Square, Printer, LogOut, Tag, Flag, Bookmark } from 'lucide-react';
+import { Search, Loader2, CheckSquare, Square, Printer, LogOut, Tag, Flag, Bookmark, Store, X, ChevronDown } from 'lucide-react';
 import { generatePrinterPDF, PrintableKind } from '../utils/printerExport';
 import { signOutUser } from './AuthGate';
 
@@ -26,29 +26,81 @@ export const RepresentantView: React.FC = () => {
   const [activeType, setActiveType] = useState<PrintableKind>('labels');
 
   const ITEMS_BY_TYPE = { labels: store.labels, propack: store.proPack, fanions: store.fanions };
-  const UPDATE_BY_TYPE = { labels: store.updateLabel, propack: store.updateProPackItem, fanions: store.updateFanionsItem };
+  // Les quantités du représentant sont personnelles : elles ne modifient jamais
+  // item.quantity (le champ partagé utilisé côté équipe interne), donc la
+  // « commande » de chaque représentant reste indépendante des autres et de
+  // marketing (voir REP_QUANTITIES_*_COLLECTION dans store.ts).
+  const REP_QTY_BY_TYPE = {
+    labels: store.repQuantitiesLabels,
+    propack: store.repQuantitiesProPack,
+    fanions: store.repQuantitiesFanions,
+  };
+  const SET_REP_QTY_BY_TYPE = {
+    labels: store.setRepQuantityLabels,
+    propack: store.setRepQuantityProPack,
+    fanions: store.setRepQuantityFanions,
+  };
   const LOG_RUN_BY_TYPE = { labels: store.logPrintRun, propack: store.logProPackPrintRun, fanions: store.logFanionsPrintRun };
 
+  const { stores } = store;
   const items = ITEMS_BY_TYPE[activeType];
-  const updateItem = UPDATE_BY_TYPE[activeType];
+  const repQuantities = REP_QTY_BY_TYPE[activeType];
+  const setRepQuantity = SET_REP_QTY_BY_TYPE[activeType];
   const logRun = LOG_RUN_BY_TYPE[activeType];
   const { imgFolder, singular, elisionE } = TYPE_META[activeType];
 
   const [searchQuery, setSearchQuery] = useState('');
+  const [storeFilter, setStoreFilter] = useState('');
+  const [isStoreDropdownOpen, setIsStoreDropdownOpen] = useState(false);
+  const [storeDropdownSearch, setStoreDropdownSearch] = useState('');
+  const storeDropdownRef = useRef<HTMLDivElement>(null);
   const [selectedItemIds, setSelectedItemIds] = useState<string[]>([]);
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
 
   const switchType = (type: PrintableKind) => {
     setActiveType(type);
     setSearchQuery('');
+    setStoreFilter('');
     setSelectedItemIds([]);
   };
 
+  // Fermer le menu déroulant du filtre magasin si clic à l'extérieur
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (storeDropdownRef.current && !storeDropdownRef.current.contains(e.target as Node)) {
+        setIsStoreDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
   const filteredItems = useMemo(() => {
     const query = searchQuery.toLowerCase().trim();
-    if (!query) return items;
-    return items.filter((item) => item.reference.toLowerCase().includes(query));
-  }, [items, searchQuery]);
+    return items.filter((item) => {
+      if (storeFilter && !item.stores.includes(storeFilter)) return false;
+      if (query && !item.reference.toLowerCase().includes(query)) return false;
+      return true;
+    });
+  }, [items, searchQuery, storeFilter]);
+
+  const storeFilterName = storeFilter ? stores.find((s) => s.id === storeFilter)?.name : null;
+
+  const sortedStores = useMemo(
+    () => [...stores].sort((a, b) => a.name.localeCompare(b.name, 'fr', { sensitivity: 'base' })),
+    [stores]
+  );
+  const storeDropdownOptions = useMemo(() => {
+    const query = storeDropdownSearch.toLowerCase().trim();
+    if (!query) return sortedStores;
+    return sortedStores.filter((s) => s.name.toLowerCase().includes(query));
+  }, [sortedStores, storeDropdownSearch]);
+
+  const selectStoreFilter = (id: string) => {
+    setStoreFilter(id);
+    setIsStoreDropdownOpen(false);
+    setStoreDropdownSearch('');
+  };
 
   const toggleSelectAll = () => {
     if (selectedItemIds.length === filteredItems.length) {
@@ -65,7 +117,12 @@ export const RepresentantView: React.FC = () => {
   };
 
   const handleGenerateSelectionPDF = async () => {
-    const selectedItems = items.filter((l) => selectedItemIds.includes(l.id));
+    // On substitue la quantité personnelle du représentant à celle de l'item
+    // partagé, sans jamais l'écrire dans le catalogue commun (voir updateItem
+    // plus haut, qui n'existe plus ici : seule la quantité personnelle change).
+    const selectedItems = items
+      .filter((l) => selectedItemIds.includes(l.id))
+      .map((l) => ({ ...l, quantity: repQuantities[l.id] }));
     setIsGeneratingPDF(true);
     try {
       const { missingLabels, summary } = await generatePrinterPDF(selectedItems, store.stores, activeType);
@@ -118,17 +175,88 @@ export const RepresentantView: React.FC = () => {
         ))}
       </div>
 
-      {/* Barre de recherche + actions */}
+      {/* Barre de recherche + filtre magasin + actions */}
       <div className="bg-white border-b flex items-center justify-between px-6 py-3 shadow-xs flex-shrink-0 gap-4 flex-wrap">
-        <div className="relative w-96 max-w-full">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Recherche instantanée par référence..."
-            className="w-full pl-10 pr-4 py-2 bg-gray-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 transition text-sm"
-          />
+        <div className="flex items-center gap-3 flex-1 min-w-0 flex-wrap">
+          <div className="relative w-96 max-w-full">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Recherche instantanée par référence..."
+              className="w-full pl-10 pr-4 py-2 bg-gray-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 transition text-sm"
+            />
+          </div>
+
+          <div className="relative" ref={storeDropdownRef}>
+            <button
+              type="button"
+              onClick={() => setIsStoreDropdownOpen((v) => !v)}
+              className="flex items-center gap-2 pl-9 pr-3 py-2 bg-gray-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 transition text-sm max-w-[220px] relative"
+            >
+              <Store className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+              <span className="truncate">{storeFilterName ?? 'Tous les magasins'}</span>
+              <ChevronDown size={14} className={`text-gray-400 transition-transform flex-shrink-0 ${isStoreDropdownOpen ? 'rotate-180' : ''}`} />
+            </button>
+
+            {isStoreDropdownOpen && (
+              <div className="absolute z-50 left-0 top-full mt-1 bg-white rounded-xl shadow-2xl border border-gray-200 p-3 space-y-2 w-72 max-w-[90vw]">
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" size={14} />
+                  <input
+                    type="text"
+                    value={storeDropdownSearch}
+                    onChange={(e) => setStoreDropdownSearch(e.target.value)}
+                    placeholder="Rechercher un magasin..."
+                    className="w-full pl-8 pr-7 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-orange-500"
+                    autoFocus
+                  />
+                  {storeDropdownSearch && (
+                    <button
+                      onClick={() => setStoreDropdownSearch('')}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    >
+                      <X size={12} />
+                    </button>
+                  )}
+                </div>
+
+                <div className="max-h-64 overflow-y-auto space-y-0.5">
+                  <button
+                    type="button"
+                    onClick={() => selectStoreFilter('')}
+                    className={`w-full text-left px-2 py-1.5 rounded text-xs transition ${!storeFilter ? 'bg-orange-50 text-orange-900 font-medium' : 'hover:bg-gray-50 text-gray-700'}`}
+                  >
+                    Tous les magasins
+                  </button>
+                  {storeDropdownOptions.length === 0 ? (
+                    <p className="text-xs text-gray-400 text-center py-2">Aucun magasin trouvé</p>
+                  ) : (
+                    storeDropdownOptions.map((s) => (
+                      <button
+                        key={s.id}
+                        type="button"
+                        onClick={() => selectStoreFilter(s.id)}
+                        className={`w-full text-left px-2 py-1.5 rounded text-xs truncate transition ${storeFilter === s.id ? 'bg-orange-50 text-orange-900 font-medium' : 'hover:bg-gray-50 text-gray-700'}`}
+                      >
+                        {s.name}
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {storeFilterName && (
+            <span className="flex items-center gap-1.5 bg-orange-50 text-orange-700 text-xs font-medium px-2.5 py-1.5 rounded-lg whitespace-nowrap">
+              {filteredItems.length} {singular}(s) pour « {storeFilterName} »
+              <button onClick={() => setStoreFilter('')} className="hover:text-orange-900" title="Retirer le filtre">
+                <X size={13} />
+              </button>
+            </span>
+          )}
         </div>
 
         {items.length > 0 && (
@@ -165,6 +293,8 @@ export const RepresentantView: React.FC = () => {
             <p className="text-base font-medium text-gray-600">
               {items.length === 0
                 ? `Aucun${elisionE} ${singular} disponible pour le moment.`
+                : storeFilterName
+                ? `Aucun${elisionE} ${singular} affecté${elisionE} à « ${storeFilterName} ».`
                 : `Aucun${elisionE} ${singular} ne correspond à cette recherche.`}
             </p>
           </div>
@@ -212,25 +342,50 @@ export const RepresentantView: React.FC = () => {
                     />
                   </div>
 
-                  <div className="p-4 flex items-end gap-2">
-                    <div className="flex-1 min-w-0">
-                      <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">Référence produit</label>
-                      <p className="font-mono font-bold text-gray-800 truncate">{item.reference}</p>
+                  <div className="p-4 flex-1 flex flex-col justify-between space-y-3">
+                    <div className="flex items-end gap-2">
+                      <div className="flex-1 min-w-0">
+                        <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">Référence produit</label>
+                        <p className="font-mono font-bold text-gray-800 truncate">{item.reference}</p>
+                      </div>
+                      <div className="w-16">
+                        <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">Qté</label>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          maxLength={2}
+                          value={repQuantities[item.id] ?? 1}
+                          onChange={(e) => {
+                            const digitsOnly = e.target.value.replace(/\D/g, '').slice(0, 2);
+                            setRepQuantity(item.id, digitsOnly === '' ? 1 : Number(digitsOnly));
+                          }}
+                          placeholder="1"
+                          className="w-full text-center font-mono font-bold text-gray-800 bg-gray-50 border border-gray-200 rounded px-2.5 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 transition"
+                        />
+                      </div>
                     </div>
-                    <div className="w-16">
-                      <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">Qté</label>
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        maxLength={2}
-                        value={item.quantity ?? 1}
-                        onChange={(e) => {
-                          const digitsOnly = e.target.value.replace(/\D/g, '').slice(0, 2);
-                          updateItem(item.id, { quantity: digitsOnly === '' ? 1 : Number(digitsOnly) });
-                        }}
-                        placeholder="1"
-                        className="w-full text-center font-mono font-bold text-gray-800 bg-gray-50 border border-gray-200 rounded px-2.5 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 transition"
-                      />
+
+                    {/* Magasins assignés — affichage seul, la gestion reste réservée à l'équipe interne */}
+                    <div>
+                      <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Magasins assignés</p>
+                      <div className="flex flex-wrap gap-1 min-h-[24px] items-center">
+                        {item.stores.length === 0 ? (
+                          <span className="text-xs text-gray-400 italic">Aucun magasin</span>
+                        ) : (
+                          item.stores.map((storeId) => {
+                            const storeObj = stores.find((s) => s.id === storeId);
+                            if (!storeObj) return null;
+                            return (
+                              <span
+                                key={storeId}
+                                className="inline-flex items-center bg-orange-50 text-orange-700 text-xs px-2 py-0.5 rounded-full font-medium border border-orange-100"
+                              >
+                                {storeObj.name}
+                              </span>
+                            );
+                          })
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
