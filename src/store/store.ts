@@ -7,12 +7,14 @@ import {
   addDoc,
   deleteDoc,
   updateDoc,
+  setDoc,
   onSnapshot,
   getDocs,
   writeBatch,
   arrayUnion,
   arrayRemove,
   query,
+  where,
   orderBy,
   limit,
   serverTimestamp,
@@ -85,6 +87,16 @@ interface AppState {
   fanionsPrintHistory: PrintHistoryEntry[];
   isLoading: boolean;
 
+  // Quantités personnelles des représentants : chaque représentant a ses propres
+  // quantités par item, indépendantes de celles des autres représentants et de
+  // celles utilisées côté équipe interne (voir REP_QUANTITIES_*_COLLECTION plus bas).
+  repQuantitiesLabels: Record<string, number>;
+  repQuantitiesProPack: Record<string, number>;
+  repQuantitiesFanions: Record<string, number>;
+  setRepQuantityLabels: (itemId: string, quantity: number) => void;
+  setRepQuantityProPack: (itemId: string, quantity: number) => void;
+  setRepQuantityFanions: (itemId: string, quantity: number) => void;
+
   // Actions Magasins
   addStore: (name: string, banner?: string) => Promise<void>;
   addStoresBatch: (stores: (string | { name: string; banner?: string })[]) => Promise<void>;
@@ -137,6 +149,15 @@ const PRINT_HISTORY_COLLECTION = 'printHistory';
 const PROPACK_PRINT_HISTORY_COLLECTION = 'proPackPrintHistory';
 const FANIONS_PRINT_HISTORY_COLLECTION = 'fanionsItemsPrintHistory';
 const PRINT_HISTORY_LIMIT = 50;
+
+// Quantités personnelles des représentants, une collection par catégorie : chaque
+// document est identifié par `${uid}_${itemId}` et ne contient que la quantité de
+// CE représentant pour CET item — jamais lue ni écrite par un autre représentant
+// ni par l'équipe interne, ce qui rend chaque commande de représentant totalement
+// indépendante du catalogue partagé (item.quantity) et des autres représentants.
+const REP_QUANTITIES_LABELS_COLLECTION = 'repQuantitiesLabels';
+const REP_QUANTITIES_PROPACK_COLLECTION = 'repQuantitiesProPack';
+const REP_QUANTITIES_FANIONS_COLLECTION = 'repQuantitiesFanions';
 
 // Anciens noms de collection utilisés avant le renommage "Fanions" -> "Pro-Pack" :
 // on y migre automatiquement une seule fois (voir startFirestoreSync) pour ne pas
@@ -231,7 +252,38 @@ const migrateLegacyCollection = async (fromCollection: string, toCollection: str
 const pendingLabelWrites = new Map<string, ReturnType<typeof setTimeout>>();
 const pendingProPackWrites = new Map<string, ReturnType<typeof setTimeout>>();
 const pendingFanionsWrites = new Map<string, ReturnType<typeof setTimeout>>();
+const pendingRepQuantityWrites = new Map<string, ReturnType<typeof setTimeout>>();
 const LABEL_WRITE_DEBOUNCE_MS = 500;
+
+// Écrit la quantité personnelle d'un représentant pour un item donné, dans la
+// collection dédiée à la catégorie. Le document (identifié par `${uid}_${itemId}`)
+// peut ne pas encore exister (setDoc + merge au lieu de updateDoc), et le filtrage
+// par uid côté lecture (voir startFirestoreSync) garantit qu'aucun autre
+// utilisateur ne voit ou n'écrase cette valeur.
+const setRepQuantityTo = (
+  collectionName: string,
+  stateKey: 'repQuantitiesLabels' | 'repQuantitiesProPack' | 'repQuantitiesFanions',
+  itemId: string,
+  quantity: number
+) => {
+  const uid = auth.currentUser?.uid;
+  if (!uid) return;
+
+  useAppStore.setState((state) => ({
+    [stateKey]: { ...state[stateKey], [itemId]: quantity },
+  }));
+
+  const debounceKey = `${collectionName}:${itemId}`;
+  const existingTimeout = pendingRepQuantityWrites.get(debounceKey);
+  if (existingTimeout) clearTimeout(existingTimeout);
+  pendingRepQuantityWrites.set(
+    debounceKey,
+    setTimeout(() => {
+      pendingRepQuantityWrites.delete(debounceKey);
+      setDoc(doc(db, collectionName, `${uid}_${itemId}`), { uid, itemId, quantity }, { merge: true }).catch(() => {});
+    }, LABEL_WRITE_DEBOUNCE_MS)
+  );
+};
 
 export const useAppStore = create<AppState>()((set, get) => ({
   labels: [],
@@ -242,6 +294,16 @@ export const useAppStore = create<AppState>()((set, get) => ({
   proPackPrintHistory: [],
   fanionsPrintHistory: [],
   isLoading: true,
+
+  repQuantitiesLabels: {},
+  repQuantitiesProPack: {},
+  repQuantitiesFanions: {},
+  setRepQuantityLabels: (itemId, quantity) =>
+    setRepQuantityTo(REP_QUANTITIES_LABELS_COLLECTION, 'repQuantitiesLabels', itemId, quantity),
+  setRepQuantityProPack: (itemId, quantity) =>
+    setRepQuantityTo(REP_QUANTITIES_PROPACK_COLLECTION, 'repQuantitiesProPack', itemId, quantity),
+  setRepQuantityFanions: (itemId, quantity) =>
+    setRepQuantityTo(REP_QUANTITIES_FANIONS_COLLECTION, 'repQuantitiesFanions', itemId, quantity),
 
   addStore: async (name, banner) => {
     const id = crypto.randomUUID();
@@ -478,6 +540,9 @@ let unsubscribeFanions: (() => void) | null = null;
 let unsubscribePrintHistory: (() => void) | null = null;
 let unsubscribeProPackPrintHistory: (() => void) | null = null;
 let unsubscribeFanionsPrintHistory: (() => void) | null = null;
+let unsubscribeRepQuantitiesLabels: (() => void) | null = null;
+let unsubscribeRepQuantitiesProPack: (() => void) | null = null;
+let unsubscribeRepQuantitiesFanions: (() => void) | null = null;
 
 const markLoadedIfReady = () => {
   if (storesLoaded && labelsLoaded && proPackLoaded && fanionsLoaded) {
@@ -487,7 +552,9 @@ const markLoadedIfReady = () => {
 
 // La synchronisation Firestore ne démarre qu'une fois l'utilisateur authentifié
 // (les règles de sécurité exigent request.auth != null) et s'arrête à la déconnexion.
-const startFirestoreSync = () => {
+// `uid` sert à filtrer les quantités personnelles des représentants (voir plus bas)
+// pour que chacun ne charge et ne voie jamais que les siennes.
+const startFirestoreSync = (uid: string) => {
   storesLoaded = false;
   labelsLoaded = false;
   proPackLoaded = false;
@@ -591,6 +658,48 @@ const startFirestoreSync = () => {
     },
     (error) => console.error("Erreur de synchronisation de l'historique d'impression Fanions :", error)
   );
+
+  // Quantités personnelles des représentants : filtrées par uid dès la requête
+  // Firestore (pas seulement côté affichage), pour que ce représentant ne
+  // reçoive jamais les quantités d'un autre représentant.
+  unsubscribeRepQuantitiesLabels = onSnapshot(
+    query(collection(db, REP_QUANTITIES_LABELS_COLLECTION), where('uid', '==', uid)),
+    (snapshot) => {
+      const repQuantitiesLabels: Record<string, number> = {};
+      snapshot.docs.forEach((d) => {
+        const data = d.data() as { itemId: string; quantity: number };
+        repQuantitiesLabels[data.itemId] = data.quantity;
+      });
+      useAppStore.setState({ repQuantitiesLabels });
+    },
+    (error) => console.error('Erreur de synchronisation des quantités personnelles (Étiquettes) :', error)
+  );
+
+  unsubscribeRepQuantitiesProPack = onSnapshot(
+    query(collection(db, REP_QUANTITIES_PROPACK_COLLECTION), where('uid', '==', uid)),
+    (snapshot) => {
+      const repQuantitiesProPack: Record<string, number> = {};
+      snapshot.docs.forEach((d) => {
+        const data = d.data() as { itemId: string; quantity: number };
+        repQuantitiesProPack[data.itemId] = data.quantity;
+      });
+      useAppStore.setState({ repQuantitiesProPack });
+    },
+    (error) => console.error('Erreur de synchronisation des quantités personnelles (Pro-Pack) :', error)
+  );
+
+  unsubscribeRepQuantitiesFanions = onSnapshot(
+    query(collection(db, REP_QUANTITIES_FANIONS_COLLECTION), where('uid', '==', uid)),
+    (snapshot) => {
+      const repQuantitiesFanions: Record<string, number> = {};
+      snapshot.docs.forEach((d) => {
+        const data = d.data() as { itemId: string; quantity: number };
+        repQuantitiesFanions[data.itemId] = data.quantity;
+      });
+      useAppStore.setState({ repQuantitiesFanions });
+    },
+    (error) => console.error('Erreur de synchronisation des quantités personnelles (Fanions) :', error)
+  );
 };
 
 const stopFirestoreSync = () => {
@@ -601,6 +710,9 @@ const stopFirestoreSync = () => {
   unsubscribePrintHistory?.();
   unsubscribeProPackPrintHistory?.();
   unsubscribeFanionsPrintHistory?.();
+  unsubscribeRepQuantitiesLabels?.();
+  unsubscribeRepQuantitiesProPack?.();
+  unsubscribeRepQuantitiesFanions?.();
   unsubscribeStores = null;
   unsubscribeLabels = null;
   unsubscribeProPack = null;
@@ -608,6 +720,9 @@ const stopFirestoreSync = () => {
   unsubscribePrintHistory = null;
   unsubscribeProPackPrintHistory = null;
   unsubscribeFanionsPrintHistory = null;
+  unsubscribeRepQuantitiesLabels = null;
+  unsubscribeRepQuantitiesProPack = null;
+  unsubscribeRepQuantitiesFanions = null;
   defaultStoresSeeded = false;
   useAppStore.setState({
     labels: [],
@@ -617,13 +732,16 @@ const stopFirestoreSync = () => {
     printHistory: [],
     proPackPrintHistory: [],
     fanionsPrintHistory: [],
+    repQuantitiesLabels: {},
+    repQuantitiesProPack: {},
+    repQuantitiesFanions: {},
     isLoading: true,
   });
 };
 
 onAuthStateChanged(auth, (user) => {
   if (user) {
-    startFirestoreSync();
+    startFirestoreSync(user.uid);
   } else {
     stopFirestoreSync();
   }
