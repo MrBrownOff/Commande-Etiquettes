@@ -8,6 +8,7 @@ import {
   deleteDoc,
   updateDoc,
   setDoc,
+  getDoc,
   onSnapshot,
   getDocs,
   writeBatch,
@@ -28,6 +29,24 @@ export interface StoreItem {
   name: string;
   banner?: string;
 }
+
+export type UserRole = 'admin' | 'representant';
+
+export interface AppUser {
+  id: string; // uid Firebase Auth
+  email: string;
+  role: UserRole;
+}
+
+// Règle d'inférence utilisée UNIQUEMENT lors de la toute première connexion d'un
+// compte, pour créer automatiquement son document de rôle sans intervention
+// manuelle : reprend la même convention que l'ancien routage par email. Les
+// règles Firestore recalculent indépendamment ce même résultat côté serveur
+// (voir firestore.rules) — un compte ne peut donc jamais s'auto-attribuer un
+// rôle différent de celui-ci. Un admin peut ensuite corriger le rôle à tout
+// moment depuis le panneau « Accès ».
+export const inferRoleFromEmail = (email?: string | null): UserRole =>
+  (email ?? '').toLowerCase().includes('representant') ? 'representant' : 'admin';
 
 // Représente un item imprimable (étiquette ou Pro-Pack) : même structure pour les deux
 // catégories, qui vivent chacune dans leur propre collection Firestore indépendante.
@@ -97,6 +116,13 @@ interface AppState {
   setRepQuantityProPack: (itemId: string, quantity: number) => void;
   setRepQuantityFanions: (itemId: string, quantity: number) => void;
 
+  // Rôle du compte connecté (voir inferRoleFromEmail ci-dessus) et, pour un
+  // admin uniquement, la liste des comptes déjà connectés au moins une fois
+  // (alimente le panneau « Accès »).
+  userRole: UserRole | null;
+  users: AppUser[];
+  updateUserRole: (uid: string, role: UserRole) => Promise<void>;
+
   // Actions Magasins
   addStore: (name: string, banner?: string) => Promise<void>;
   addStoresBatch: (stores: (string | { name: string; banner?: string })[]) => Promise<void>;
@@ -158,6 +184,11 @@ const PRINT_HISTORY_LIMIT = 50;
 const REP_QUANTITIES_LABELS_COLLECTION = 'repQuantitiesLabels';
 const REP_QUANTITIES_PROPACK_COLLECTION = 'repQuantitiesProPack';
 const REP_QUANTITIES_FANIONS_COLLECTION = 'repQuantitiesFanions';
+
+// Un document par compte (id = uid), créé automatiquement à la première
+// connexion (voir startRoleSync) : porte le rôle qui détermine à la fois la
+// vue affichée et, côté serveur, ce que le compte a le droit d'écrire.
+const USERS_COLLECTION = 'users';
 
 // Anciens noms de collection utilisés avant le renommage "Fanions" -> "Pro-Pack" :
 // on y migre automatiquement une seule fois (voir startFirestoreSync) pour ne pas
@@ -304,6 +335,12 @@ export const useAppStore = create<AppState>()((set, get) => ({
     setRepQuantityTo(REP_QUANTITIES_PROPACK_COLLECTION, 'repQuantitiesProPack', itemId, quantity),
   setRepQuantityFanions: (itemId, quantity) =>
     setRepQuantityTo(REP_QUANTITIES_FANIONS_COLLECTION, 'repQuantitiesFanions', itemId, quantity),
+
+  userRole: null,
+  users: [],
+  updateUserRole: async (uid, role) => {
+    await updateDoc(doc(db, USERS_COLLECTION, uid), { role });
+  },
 
   addStore: async (name, banner) => {
     const id = crypto.randomUUID();
@@ -543,11 +580,70 @@ let unsubscribeFanionsPrintHistory: (() => void) | null = null;
 let unsubscribeRepQuantitiesLabels: (() => void) | null = null;
 let unsubscribeRepQuantitiesProPack: (() => void) | null = null;
 let unsubscribeRepQuantitiesFanions: (() => void) | null = null;
+let userRoleLoaded = false;
+let unsubscribeOwnUserDoc: (() => void) | null = null;
+let unsubscribeUsers: (() => void) | null = null;
 
 const markLoadedIfReady = () => {
-  if (storesLoaded && labelsLoaded && proPackLoaded && fanionsLoaded) {
+  if (storesLoaded && labelsLoaded && proPackLoaded && fanionsLoaded && userRoleLoaded) {
     useAppStore.setState({ isLoading: false });
   }
+};
+
+// Garantit que le document de rôle du compte existe AVANT de démarrer le
+// reste de la synchronisation Firestore (startFirestoreSync peut, à la toute
+// première connexion sur un projet vide, déclencher une écriture réservée
+// aux admins — l'amorçage des magasins par défaut). Sans cette étape
+// bloquante, cette écriture pourrait partir avant que users/{uid} n'existe
+// et être refusée par isAdmin() côté règles.
+const ensureUserRoleDoc = async (uid: string, email: string | null): Promise<void> => {
+  const ref = doc(db, USERS_COLLECTION, uid);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) {
+    await setDoc(ref, { email: email ?? '', role: inferRoleFromEmail(email) });
+  }
+};
+
+// Abonnement en continu au rôle du compte connecté (pris en compte sans
+// re-login si un admin le modifie depuis le panneau « Accès »). Seul un admin
+// a en plus besoin de la liste complète des comptes (alimente ce panneau),
+// donc on ne s'y abonne que dans ce cas pour ne jamais tenter une lecture
+// refusée côté représentant.
+const startRoleSync = (uid: string) => {
+  userRoleLoaded = false;
+
+  unsubscribeOwnUserDoc = onSnapshot(
+    doc(db, USERS_COLLECTION, uid),
+    (snap) => {
+      if (!snap.exists()) return; // création en cours (voir ensureUserRoleDoc)
+
+      const data = snap.data() as { role: UserRole; email?: string };
+      useAppStore.setState({ userRole: data.role });
+      userRoleLoaded = true;
+      markLoadedIfReady();
+
+      if (data.role === 'admin' && !unsubscribeUsers) {
+        unsubscribeUsers = onSnapshot(
+          collection(db, USERS_COLLECTION),
+          (usersSnap) => {
+            const users = usersSnap.docs.map((d) => ({ id: d.id, ...d.data() }) as AppUser);
+            useAppStore.setState({ users });
+          },
+          (error) => console.error('Erreur de synchronisation des comptes :', error)
+        );
+      }
+    },
+    (error) => console.error('Erreur de synchronisation du rôle :', error)
+  );
+};
+
+const stopRoleSync = () => {
+  unsubscribeOwnUserDoc?.();
+  unsubscribeUsers?.();
+  unsubscribeOwnUserDoc = null;
+  unsubscribeUsers = null;
+  userRoleLoaded = false;
+  useAppStore.setState({ userRole: null, users: [] });
 };
 
 // La synchronisation Firestore ne démarre qu'une fois l'utilisateur authentifié
@@ -741,8 +837,14 @@ const stopFirestoreSync = () => {
 
 onAuthStateChanged(auth, (user) => {
   if (user) {
-    startFirestoreSync(user.uid);
+    ensureUserRoleDoc(user.uid, user.email)
+      .catch((error) => console.error('Erreur de création du rôle :', error))
+      .finally(() => {
+        startFirestoreSync(user.uid);
+        startRoleSync(user.uid);
+      });
   } else {
     stopFirestoreSync();
+    stopRoleSync();
   }
 });

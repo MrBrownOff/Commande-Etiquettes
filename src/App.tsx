@@ -5,20 +5,19 @@ import { StoresView } from './components/StoresView';
 import { ProjectView } from './components/ProjectView';
 import { LabelsView } from './components/LabelsView';
 import { RepresentantView } from './components/RepresentantView';
+import { AccessView } from './components/AccessView';
 import { AuthGate } from './components/AuthGate';
 import { useAppStore } from './store/store';
-import { auth } from './firebase';
-
-// Convention de compte : tout email de connexion contenant "representant" bascule
-// automatiquement sur la vue allégée (sélection d'étiquettes à imprimer, sans
-// gestion des magasins). Aucune règle Firestore distincte n'est nécessaire : les
-// deux profils partagent le même accès en lecture/écriture, seule l'interface change.
-const isRepresentantAccount = (email?: string | null) =>
-  (email ?? '').toLowerCase().includes('representant');
 
 function AppContent() {
-  const [currentTab, setCurrentTab] = useState<'labels' | 'propack' | 'fanions' | 'stores' | 'project'>('labels');
+  const [currentTab, setCurrentTab] = useState<
+    'labels' | 'propack' | 'fanions' | 'stores' | 'access' | 'project'
+  >('labels');
   const isLoading = useAppStore((state) => state.isLoading);
+  // Le rôle (voir store.ts / firestore.rules) détermine la vue affichée — plus
+  // fiable qu'une convention sur l'email : modifiable depuis le panneau « Accès »
+  // sans devoir recréer le compte, et vérifié indépendamment côté serveur.
+  const userRole = useAppStore((state) => state.userRole);
 
   if (isLoading) {
     return (
@@ -28,7 +27,7 @@ function AppContent() {
     );
   }
 
-  if (isRepresentantAccount(auth.currentUser?.email)) {
+  if (userRole === 'representant') {
     return <RepresentantView />;
   }
 
@@ -43,6 +42,7 @@ function AppContent() {
         {currentTab === 'propack' && <LabelsView itemType="propack" />}
         {currentTab === 'fanions' && <LabelsView itemType="fanions" />}
         {currentTab === 'stores' && <StoresView />}
+        {currentTab === 'access' && <AccessView />}
         {currentTab === 'project' && <ProjectView />}
       </main>
     </div>
