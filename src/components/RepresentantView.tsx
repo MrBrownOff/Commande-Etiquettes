@@ -342,50 +342,25 @@ export const RepresentantView: React.FC = () => {
                     />
                   </div>
 
-                  <div className="p-4 flex-1 flex flex-col justify-between space-y-3">
-                    <div className="flex items-end gap-2">
-                      <div className="flex-1 min-w-0">
-                        <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">Référence produit</label>
-                        <p className="font-mono font-bold text-gray-800 truncate">{item.reference}</p>
-                      </div>
-                      <div className="w-16">
-                        <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">Qté</label>
-                        <input
-                          type="text"
-                          inputMode="numeric"
-                          maxLength={2}
-                          value={repQuantities[item.id] ?? 1}
-                          onChange={(e) => {
-                            const digitsOnly = e.target.value.replace(/\D/g, '').slice(0, 2);
-                            setRepQuantity(item.id, digitsOnly === '' ? 1 : Number(digitsOnly));
-                          }}
-                          placeholder="1"
-                          className="w-full text-center font-mono font-bold text-gray-800 bg-gray-50 border border-gray-200 rounded px-2.5 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 transition"
-                        />
-                      </div>
+                  <div className="p-4 flex items-end gap-2">
+                    <div className="flex-1 min-w-0">
+                      <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">Référence produit</label>
+                      <p className="font-mono font-bold text-gray-800 truncate">{item.reference}</p>
                     </div>
-
-                    {/* Magasins assignés — affichage seul, la gestion reste réservée à l'équipe interne */}
-                    <div>
-                      <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Magasins assignés</p>
-                      <div className="flex flex-wrap gap-1 min-h-[24px] items-center">
-                        {item.stores.length === 0 ? (
-                          <span className="text-xs text-gray-400 italic">Aucun magasin</span>
-                        ) : (
-                          item.stores.map((storeId) => {
-                            const storeObj = stores.find((s) => s.id === storeId);
-                            if (!storeObj) return null;
-                            return (
-                              <span
-                                key={storeId}
-                                className="inline-flex items-center bg-orange-50 text-orange-700 text-xs px-2 py-0.5 rounded-full font-medium border border-orange-100"
-                              >
-                                {storeObj.name}
-                              </span>
-                            );
-                          })
-                        )}
-                      </div>
+                    <div className="w-16">
+                      <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">Qté</label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={2}
+                        value={repQuantities[item.id] ?? 1}
+                        onChange={(e) => {
+                          const digitsOnly = e.target.value.replace(/\D/g, '').slice(0, 2);
+                          setRepQuantity(item.id, digitsOnly === '' ? 1 : Number(digitsOnly));
+                        }}
+                        placeholder="1"
+                        className="w-full text-center font-mono font-bold text-gray-800 bg-gray-50 border border-gray-200 rounded px-2.5 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 transition"
+                      />
                     </div>
                   </div>
                 </div>
