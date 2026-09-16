@@ -122,7 +122,7 @@ export const RepresentantView: React.FC = () => {
     // plus haut, qui n'existe plus ici : seule la quantité personnelle change).
     const selectedItems = items
       .filter((l) => selectedItemIds.includes(l.id))
-      .map((l) => ({ ...l, quantity: repQuantities[l.id] }));
+      .map((l) => ({ ...l, quantity: repQuantities[l.id] ?? 1 }));
     setIsGeneratingPDF(true);
     try {
       const { missingLabels, summary } = await generatePrinterPDF(selectedItems, store.stores, activeType);
