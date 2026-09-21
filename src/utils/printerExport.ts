@@ -152,12 +152,6 @@ export const generatePrinterPDF = async (items: LabelItem[], stores: StoreItem[]
     throw new Error(`Aucun${config.elisionE} ${config.noun} n'a de quantité renseignée.`);
   }
 
-  // Les pages d'items doivent pouvoir accueillir des formats plus grands qu'une
-  // feuille A4 (ex: fanions grand format 9x29po) : on ne réduit jamais en dessous
-  // du format cible réel de la catégorie, sous peine de rogner le visuel imprimé.
-  const itemPageWidth = Math.max(PAGE_WIDTH, itemWidthPt);
-  const itemPageHeight = Math.max(PAGE_HEIGHT, itemHeightPt);
-
   const pdfDoc = await PDFDocument.create();
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
@@ -244,6 +238,15 @@ export const generatePrinterPDF = async (items: LabelItem[], stores: StoreItem[]
     const ratio = Math.min(itemWidthPt / refWidth, itemHeightPt / refHeight);
     const w = embedded.width * ratio;
     const h = embedded.height * ratio;
+
+    // La page de destination doit pouvoir accueillir l'item source en entier,
+    // marge de fond perdu et traits de coupe compris (w/h, potentiellement plus
+    // grands que la taille de coupe cible quand le ratio vaut 1 — ex: Pro-Pack et
+    // fanions, dont le format cible correspond pile à la TrimBox) : sinon cette
+    // marge dépasse de la page et les traits de coupe sont rognés à l'export.
+    // On ne réduit jamais non plus en dessous d'une feuille A4.
+    const itemPageWidth = Math.max(PAGE_WIDTH, itemWidthPt, w);
+    const itemPageHeight = Math.max(PAGE_HEIGHT, itemHeightPt, h);
 
     // On centre la TrimBox sur la page (pas le coin de la page entière),
     // pour que la marge de fond perdu et les traits de coupe restent
