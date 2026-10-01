@@ -125,11 +125,16 @@ export const RepresentantView: React.FC = () => {
       .map((l) => ({ ...l, quantity: repQuantities[l.id] ?? 1 }));
     setIsGeneratingPDF(true);
     try {
-      const { missingLabels, summary } = await generatePrinterPDF(selectedItems, store.stores, activeType);
+      const { missingLabels, noCropMarksLabels, summary } = await generatePrinterPDF(selectedItems, store.stores, activeType);
       await logRun(summary);
       if (missingLabels.length > 0) {
         alert(
           `Le PDF a été généré, mais l'image de ${missingLabels.length} ${singular}(s) était introuvable et a été omise : ${missingLabels.join(', ')}`
+        );
+      }
+      if (noCropMarksLabels.length > 0) {
+        alert(
+          `Attention : le PDF vectoriel (avec traits de coupe) était introuvable pour ${noCropMarksLabels.length} ${singular}(s), imprimé(s) à partir de l'image JPEG sans traits de coupe : ${noCropMarksLabels.join(', ')}`
         );
       }
     } catch (err) {
