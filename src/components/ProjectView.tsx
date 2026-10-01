@@ -57,11 +57,16 @@ export const ProjectView: React.FC = () => {
   const handleGeneratePrinterPDF = async () => {
     setIsGeneratingPDF(true);
     try {
-      const { missingLabels, summary } = await generatePrinterPDF(labels, stores, 'labels');
+      const { missingLabels, noCropMarksLabels, summary } = await generatePrinterPDF(labels, stores, 'labels');
       await logPrintRun(summary);
       if (missingLabels.length > 0) {
         alert(
           `Le PDF a été généré, mais l'image de ${missingLabels.length} étiquette(s) était introuvable et a été omise : ${missingLabels.join(', ')}`
+        );
+      }
+      if (noCropMarksLabels.length > 0) {
+        alert(
+          `Attention : le PDF vectoriel (avec traits de coupe) était introuvable pour ${noCropMarksLabels.length} étiquette(s), imprimée(s) à partir de l'image JPEG sans traits de coupe : ${noCropMarksLabels.join(', ')}`
         );
       }
     } catch (err) {
@@ -75,11 +80,16 @@ export const ProjectView: React.FC = () => {
   const handleGenerateProPackPrinterPDF = async () => {
     setIsGeneratingProPackPDF(true);
     try {
-      const { missingLabels, summary } = await generatePrinterPDF(proPack, stores, 'propack');
+      const { missingLabels, noCropMarksLabels, summary } = await generatePrinterPDF(proPack, stores, 'propack');
       await logProPackPrintRun(summary);
       if (missingLabels.length > 0) {
         alert(
           `Le PDF a été généré, mais l'image de ${missingLabels.length} Pro-Pack était introuvable et a été omise : ${missingLabels.join(', ')}`
+        );
+      }
+      if (noCropMarksLabels.length > 0) {
+        alert(
+          `Attention : le PDF vectoriel (avec traits de coupe) était introuvable pour ${noCropMarksLabels.length} Pro-Pack, imprimé(s) à partir de l'image JPEG sans traits de coupe : ${noCropMarksLabels.join(', ')}`
         );
       }
     } catch (err) {
@@ -93,11 +103,16 @@ export const ProjectView: React.FC = () => {
   const handleGenerateFanionsPrinterPDF = async () => {
     setIsGeneratingFanionsPDF(true);
     try {
-      const { missingLabels, summary } = await generatePrinterPDF(fanions, stores, 'fanions');
+      const { missingLabels, noCropMarksLabels, summary } = await generatePrinterPDF(fanions, stores, 'fanions');
       await logFanionsPrintRun(summary);
       if (missingLabels.length > 0) {
         alert(
           `Le PDF a été généré, mais l'image de ${missingLabels.length} fanion(s) était introuvable et a été omise : ${missingLabels.join(', ')}`
+        );
+      }
+      if (noCropMarksLabels.length > 0) {
+        alert(
+          `Attention : le PDF vectoriel (avec traits de coupe) était introuvable pour ${noCropMarksLabels.length} fanion(s), imprimé(s) à partir de l'image JPEG sans traits de coupe : ${noCropMarksLabels.join(', ')}`
         );
       }
     } catch (err) {
