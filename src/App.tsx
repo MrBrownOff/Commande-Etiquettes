@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Loader2 } from 'lucide-react';
-import { Sidebar } from './components/Sidebar';
+import { Sidebar, SidebarTab, PEUPLIER_CATEGORY } from './components/Sidebar';
 import { StoresView } from './components/StoresView';
 import { ProjectView } from './components/ProjectView';
 import { LabelsView } from './components/LabelsView';
@@ -10,9 +10,7 @@ import { AuthGate } from './components/AuthGate';
 import { useAppStore } from './store/store';
 
 function AppContent() {
-  const [currentTab, setCurrentTab] = useState<
-    'labels' | 'propack' | 'fanions' | 'stores' | 'access' | 'project'
-  >('labels');
+  const [currentTab, setCurrentTab] = useState<SidebarTab>('labels');
   const isLoading = useAppStore((state) => state.isLoading);
   // Le rôle (voir store.ts / firestore.rules) détermine la vue affichée — plus
   // fiable qu'une convention sur l'email : modifiable depuis le panneau « Accès »
@@ -39,6 +37,9 @@ function AppContent() {
       {/* Rendu dynamique de la vue sélectionnée */}
       <main className="flex-1 overflow-auto">
         {currentTab === 'labels' && <LabelsView itemType="labels" />}
+        {currentTab === 'labels-peuplier' && (
+          <LabelsView itemType="labels" fixedCategory={PEUPLIER_CATEGORY} title={PEUPLIER_CATEGORY} />
+        )}
         {currentTab === 'propack' && <LabelsView itemType="propack" />}
         {currentTab === 'fanions' && <LabelsView itemType="fanions" />}
         {currentTab === 'stores' && <StoresView />}

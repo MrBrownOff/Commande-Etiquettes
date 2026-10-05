@@ -12,6 +12,12 @@ interface LabelsViewProps {
   // Firestore, dossiers d'assets et historiques d'impression totalement
   // indépendants (voir store.ts et printerExport.ts).
   itemType?: PrintableKind;
+  // Sous-menu optionnel (ex: "Produits en peuplier") : filtre la vue sur le champ
+  // `category` des items au lieu d'une collection Firestore séparée. Les items
+  // importés depuis cette vue sont automatiquement tagués avec cette catégorie.
+  // Les items partagent toujours la même collection que la vue non filtrée.
+  fixedCategory?: string;
+  title?: string;
 }
 
 const TYPE_TEXT: Record<
@@ -44,7 +50,7 @@ const TYPE_TEXT: Record<
   },
 };
 
-export const LabelsView: React.FC<LabelsViewProps> = ({ itemType = 'labels' }) => {
+export const LabelsView: React.FC<LabelsViewProps> = ({ itemType = 'labels', fixedCategory, title }) => {
   const store = useAppStore();
   const text = TYPE_TEXT[itemType];
 
@@ -83,15 +89,22 @@ export const LabelsView: React.FC<LabelsViewProps> = ({ itemType = 'labels' }) =
 
   const { stores } = store;
   const {
-    items,
+    items: allItems,
     addItemsBatch,
     updateItem,
     deleteItem,
-    clearItems,
+    clearItems: clearAllItems,
     assignStoresToItems,
     removeStoresFromItems,
     logRun,
   } = ACTIONS[itemType];
+
+  // En sous-menu (ex: "Produits en peuplier"), la vue est scopée au champ `category`
+  // des items plutôt qu'à une collection Firestore distincte (voir LabelsViewProps).
+  const items = useMemo(
+    () => (fixedCategory ? allItems.filter((item) => item.category === fixedCategory) : allItems),
+    [allItems, fixedCategory]
+  );
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -144,6 +157,7 @@ export const LabelsView: React.FC<LabelsViewProps> = ({ itemType = 'labels' }) =
       banner: '',
       stores: [],
       quantity: 1,
+      ...(fixedCategory ? { category: fixedCategory } : {}),
     }));
 
     await addItemsBatch(newItems);
@@ -152,10 +166,15 @@ export const LabelsView: React.FC<LabelsViewProps> = ({ itemType = 'labels' }) =
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  // Vider tous les items de cette catégorie
-  const handleClearItems = () => {
-    if (window.confirm(`Êtes-vous sûr de vouloir supprimer tous les ${text.plural} ?`)) {
-      clearItems();
+  // Vider les items de cette catégorie : toute la collection en vue générale,
+  // seulement les items de la sous-catégorie quand la vue est scopée (voir
+  // LabelsViewProps.fixedCategory) pour ne jamais effacer les autres étiquettes.
+  const handleClearItems = async () => {
+    if (!window.confirm(`Êtes-vous sûr de vouloir supprimer tous les ${text.plural} ?`)) return;
+    if (fixedCategory) {
+      await Promise.all(items.map((item) => deleteItem(item.id)));
+    } else {
+      await clearAllItems();
     }
   };
 
@@ -346,6 +365,8 @@ export const LabelsView: React.FC<LabelsViewProps> = ({ itemType = 'labels' }) =
 
       {/* Workspace */}
       <div className="flex-1 overflow-auto p-6 space-y-6">
+        {title && <h1 className="text-xl font-bold text-gray-800">{title}</h1>}
+
         {/* Statistiques rapides */}
         <div className="grid grid-cols-4 gap-4">
           <div className="bg-white p-5 rounded-xl shadow-xs border border-gray-100">
