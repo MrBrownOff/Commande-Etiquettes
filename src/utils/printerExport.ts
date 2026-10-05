@@ -219,12 +219,20 @@ export const generatePrinterPDF = async (items: LabelItem[], stores: StoreItem[]
 
   // Pages d'items : une page par exemplaire commandé, sans légende superflue
   const missingItems: string[] = [];
+  // Items imprimés à partir du JPEG de secours plutôt que du PDF vectoriel du
+  // fabricant (PDF introuvable ou illisible à cette référence) : contrairement
+  // au JPEG, le PDF vectoriel porte la marge de fond perdu et les traits de
+  // coupe, donc ces pages sont imprimées sans traits de coupe.
+  const noCropMarksItems: string[] = [];
   for (const item of orderedItems) {
     const qty = item.quantity ?? 0;
     const embedded = await embedItem(pdfDoc, item, config.pdfFolder, config.imgFolder);
     if (!embedded) {
       missingItems.push(item.reference);
       continue;
+    }
+    if (embedded.kind === 'jpg') {
+      noCropMarksItems.push(item.reference);
     }
 
     // Le ratio d'ajustement se base sur la TrimBox (la taille réelle une fois
@@ -282,6 +290,7 @@ export const generatePrinterPDF = async (items: LabelItem[], stores: StoreItem[]
 
   return {
     missingLabels: missingItems,
+    noCropMarksLabels: noCropMarksItems,
     summary: {
       totalReferences: orderedItems.length,
       totalQuantity: total,

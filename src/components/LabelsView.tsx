@@ -209,11 +209,16 @@ export const LabelsView: React.FC<LabelsViewProps> = ({ itemType = 'labels' }) =
     const selectedItems = items.filter((l) => selectedItemIds.includes(l.id));
     setIsGeneratingPDF(true);
     try {
-      const { missingLabels, summary } = await generatePrinterPDF(selectedItems, stores, itemType);
+      const { missingLabels, noCropMarksLabels, summary } = await generatePrinterPDF(selectedItems, stores, itemType);
       await logRun(summary);
       if (missingLabels.length > 0) {
         alert(
           `Le PDF a été généré, mais l'image de ${missingLabels.length} ${text.singular}(s) était introuvable et a été omise : ${missingLabels.join(', ')}`
+        );
+      }
+      if (noCropMarksLabels.length > 0) {
+        alert(
+          `Attention : le PDF vectoriel (avec traits de coupe) était introuvable pour ${noCropMarksLabels.length} ${text.singular}(s), imprimé(s) à partir de l'image JPEG sans traits de coupe : ${noCropMarksLabels.join(', ')}`
         );
       }
     } catch (err) {
