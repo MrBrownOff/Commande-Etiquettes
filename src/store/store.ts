@@ -60,6 +60,7 @@ export interface LabelItem {
   banner: string; // ex: "Canac", "BMR", "Rona", "Patrick Morin", "Indépendant"
   stores: string[]; // Liste des IDs de magasins assignés
   quantity?: number; // Quantité commandée (0-99)
+  category?: string; // Sous-catégorie optionnelle (ex: "Produits en peuplier"), pour les sous-menus de LabelsView
 }
 
 // Trace historisée d'un PDF généré pour l'imprimeur : on ne conserve pas le fichier

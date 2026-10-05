@@ -1,16 +1,24 @@
 // src/components/Sidebar.tsx
 import React from 'react';
-import { LayoutDashboard, Flag, Bookmark, Store, Users, Save, Download, LogOut } from 'lucide-react';
+import { LayoutDashboard, Flag, Bookmark, Store, Users, Save, Download, LogOut, TreeDeciduous } from 'lucide-react';
 import { useAppStore } from '../store/store';
 import { signOutUser } from './AuthGate';
 
+// Nom de la sous-catégorie "Produits en peuplier" (voir LabelItem.category dans
+// store.ts) : constante partagée avec App.tsx pour que le filtre appliqué par
+// LabelsView corresponde exactement au compteur affiché ici.
+export const PEUPLIER_CATEGORY = 'Produits en peuplier';
+
+export type SidebarTab = 'labels' | 'labels-peuplier' | 'propack' | 'fanions' | 'stores' | 'access' | 'project';
+
 interface SidebarProps {
-  currentTab: 'labels' | 'propack' | 'fanions' | 'stores' | 'access' | 'project';
-  setCurrentTab: (tab: 'labels' | 'propack' | 'fanions' | 'stores' | 'access' | 'project') => void;
+  currentTab: SidebarTab;
+  setCurrentTab: (tab: SidebarTab) => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ currentTab, setCurrentTab }) => {
   const { labels, proPack, fanions, stores, users, exportProject } = useAppStore();
+  const peuplierCount = labels.filter((l) => l.category === PEUPLIER_CATEGORY).length;
 
   return (
     <aside className="w-72 bg-slate-900 text-white flex flex-col shadow-lg select-none">
@@ -38,6 +46,23 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, setCurrentTab }) =
           </span>
           <span className="text-xs bg-slate-800 px-2 py-0.5 rounded-full text-slate-300">
             {labels.length}
+          </span>
+        </button>
+
+        {/* Sous-menu d'Étiquettes : vue filtrée sur LabelItem.category (voir LabelsView.fixedCategory) */}
+        <button
+          onClick={() => setCurrentTab('labels-peuplier')}
+          className={`w-full flex items-center justify-between pl-9 pr-3.5 py-2 rounded-lg font-medium text-xs transition ${currentTab === 'labels-peuplier'
+            ? 'bg-orange-500/90 text-white shadow-sm'
+            : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+            }`}
+        >
+          <span className="flex items-center gap-2.5">
+            <TreeDeciduous size={15} />
+            Produits en peuplier
+          </span>
+          <span className="text-[11px] bg-slate-800 px-1.5 py-0.5 rounded-full text-slate-300">
+            {peuplierCount}
           </span>
         </button>
 
