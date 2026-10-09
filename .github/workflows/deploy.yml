@@ -3,6 +3,12 @@ name: Déploiement GitHub Pages
 on:
   push:
     branches: ['main'] # ou 'master' selon ta branche principale
+  # Permet de relancer un déploiement propre (nouveau run_id) depuis l'onglet
+  # Actions sans pousser de commit, notamment après un échec transitoire de
+  # l'API GitHub Pages — relancer les jobs d'un run déjà échoué ré-utilise le
+  # même run_id et empile un second artefact "github-pages", que deploy-pages
+  # refuse ensuite (plusieurs artefacts du même nom).
+  workflow_dispatch:
 
 permissions:
   contents: read
