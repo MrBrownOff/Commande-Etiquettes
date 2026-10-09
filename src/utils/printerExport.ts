@@ -72,6 +72,11 @@ const getItemImageCandidates = (item: LabelItem, imgFolder: string): string[] =>
 const getItemPdfCandidate = (item: LabelItem, pdfFolder: string): string =>
   `${import.meta.env.BASE_URL}${pdfFolder}/${item.reference}.pdf`;
 
+// Dossier des PDF maîtres par type d'item : utilisé aussi par detectLabelCategory.ts
+// pour mesurer la TrimBox du PDF maître d'une référence à l'import, sans dupliquer
+// KIND_CONFIG.
+export const getPdfFolder = (kind: PrintableKind): string => KIND_CONFIG[kind].pdfFolder;
+
 type TrimBox = { x: number; y: number; width: number; height: number };
 
 type EmbeddedItem =

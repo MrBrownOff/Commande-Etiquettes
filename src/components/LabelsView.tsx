@@ -3,7 +3,8 @@ import { useAppStore, LabelItem } from '../store/store';
 import { Upload, Search, Loader2, CheckSquare, Square, Trash2, Printer, Store, X, ChevronDown } from 'lucide-react';
 import { StoreAssignPopover } from './StoreAssignPopover';
 import { BatchStoreAssignPopover } from './BatchStoreAssignPopover';
-import { generatePrinterPDF, PrintableKind } from '../utils/printerExport';
+import { generatePrinterPDF, getPdfFolder, PrintableKind } from '../utils/printerExport';
+import { detectLabelCategoryByReference } from '../utils/detectLabelCategory';
 
 interface LabelsViewProps {
   // Catégorie d'items gérée par cette instance de la vue : "labels" (étiquettes),
@@ -147,9 +148,25 @@ export const LabelsView: React.FC<LabelsViewProps> = ({ itemType = 'labels', fix
     if (!files || files.length === 0) return;
 
     setIsProcessing(true);
+    const fileList = Array.from(files);
+
+    // Détection automatique de la sous-catégorie de dimension (voir
+    // constants/categories.ts) à partir de la TrimBox du PDF maître déjà présent
+    // dans public/<pdfFolder>/ : seulement quand la vue n'impose pas déjà une
+    // catégorie (sous-menu), et seulement pour les étiquettes — Pro-Pack et
+    // Fanions n'ont pas de sous-catégorie de dimension.
+    const detectedCategories =
+      !fixedCategory && itemType === 'labels'
+        ? await Promise.all(
+            fileList.map((file) =>
+              detectLabelCategoryByReference(file.name.replace(/\.[^/.]+$/, ''), getPdfFolder(itemType))
+            )
+          )
+        : [];
+
     // Pas d'URL blob persistée : elle ne survivrait pas à la session en cours.
     // L'image est retrouvée via son nom de fichier dans public/<dossier>/ (voir fallback d'affichage).
-    const newItems: LabelItem[] = Array.from(files).map((file) => ({
+    const newItems: LabelItem[] = fileList.map((file, index) => ({
       id: crypto.randomUUID(),
       reference: file.name.replace(/\.[^/.]+$/, ''), // ex: "BC0361596.jpg" -> "BC0361596"
       filename: file.name,
@@ -158,6 +175,7 @@ export const LabelsView: React.FC<LabelsViewProps> = ({ itemType = 'labels', fix
       stores: [],
       quantity: 1,
       ...(fixedCategory ? { category: fixedCategory } : {}),
+      ...(detectedCategories[index] ? { category: detectedCategories[index] } : {}),
     }));
 
     await addItemsBatch(newItems);
