@@ -239,14 +239,6 @@ export const generatePrinterPDF = async (items: LabelItem[], stores: StoreItem[]
       noCropMarksItems.push(item.reference);
     }
 
-    // Les étiquettes taguées avec une sous-catégorie de dimension (ex: "2 x 2,25",
-    // voir Sidebar.tsx) s'impriment au format qu'elle désigne plutôt qu'au format
-    // par défaut de KIND_CONFIG, qui reste le repli pour les étiquettes sans
-    // sous-catégorie ainsi que pour Pro-Pack et Fanions.
-    const sizeOverride = item.category ? LABEL_SIZE_BY_CATEGORY[item.category] : undefined;
-    const itemWidthPt = (sizeOverride?.widthIn ?? config.widthIn) * 72;
-    const itemHeightPt = (sizeOverride?.heightIn ?? config.heightIn) * 72;
-
     // Le ratio d'ajustement se base sur la TrimBox (la taille réelle une fois
     // coupée) quand elle est disponible, pas sur la page entière — sinon la
     // marge de fond perdu serait comptée dans le calcul et l'item rétrécirait
@@ -255,6 +247,18 @@ export const generatePrinterPDF = async (items: LabelItem[], stores: StoreItem[]
     const trimBox = embedded.kind === 'pdf' ? embedded.trimBox : undefined;
     const refWidth = trimBox?.width ?? embedded.width;
     const refHeight = trimBox?.height ?? embedded.height;
+
+    // Quand le PDF maître porte une TrimBox, c'est elle — la taille physique
+    // réelle de l'étiquette — qui détermine le format cible, peu importe la
+    // sous-catégorie affichée dans l'app : plus fiable qu'un classement par
+    // catégorie, qui ne permet pas à un item d'appartenir à deux sous-menus en
+    // même temps (ex: une référence "Produits en peuplier" qui mesure aussi
+    // 2 x 2,25 po). Sans TrimBox (repli JPEG, sans unité physique connue), on
+    // retombe sur le format déclaré par la sous-catégorie de dimension (ex:
+    // "2 x 2,25", voir Sidebar.tsx), ou par défaut sur celui de KIND_CONFIG.
+    const sizeOverride = item.category ? LABEL_SIZE_BY_CATEGORY[item.category] : undefined;
+    const itemWidthPt = trimBox ? trimBox.width : (sizeOverride?.widthIn ?? config.widthIn) * 72;
+    const itemHeightPt = trimBox ? trimBox.height : (sizeOverride?.heightIn ?? config.heightIn) * 72;
     const ratio = Math.min(itemWidthPt / refWidth, itemHeightPt / refHeight);
     const w = embedded.width * ratio;
     const h = embedded.height * ratio;
