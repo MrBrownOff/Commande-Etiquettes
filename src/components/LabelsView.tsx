@@ -1,6 +1,6 @@
 import React, { useRef, useState, useMemo, useEffect } from 'react';
 import { useAppStore, LabelItem } from '../store/store';
-import { Upload, Search, Loader2, CheckSquare, Square, Trash2, Printer, Store, X, ChevronDown } from 'lucide-react';
+import { Upload, Search, Loader2, CheckSquare, Square, Trash2, Printer, Store, X, ChevronDown, Ruler } from 'lucide-react';
 import { StoreAssignPopover } from './StoreAssignPopover';
 import { BatchStoreAssignPopover } from './BatchStoreAssignPopover';
 import { generatePrinterPDF, getPdfFolder, PrintableKind } from '../utils/printerExport';
@@ -117,6 +117,7 @@ export const LabelsView: React.FC<LabelsViewProps> = ({ itemType = 'labels', fix
   const storeDropdownRef = useRef<HTMLDivElement>(null);
   const [selectedItemIds, setSelectedItemIds] = useState<string[]>([]);
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
+  const [isDetectingCategories, setIsDetectingCategories] = useState(false);
 
   // Réinitialise la sélection et les filtres locaux en changeant de catégorie
   // (ex. onglet Étiquettes -> Pro-Pack), pour éviter qu'une sélection d'étiquettes
@@ -193,6 +194,42 @@ export const LabelsView: React.FC<LabelsViewProps> = ({ itemType = 'labels', fix
       await Promise.all(items.map((item) => deleteItem(item.id)));
     } else {
       await clearAllItems();
+    }
+  };
+
+  // Répare rétroactivement les étiquettes déjà importées avant l'apparition des
+  // sous-catégories de dimension (ou importées sans que leur PDF maître soit
+  // encore présent à ce moment-là) : mesure la TrimBox de leur PDF maître et
+  // assigne la sous-catégorie correspondante. Ne touche jamais une étiquette
+  // qui a déjà une catégorie (ex: "Produits en peuplier") pour ne pas l'en
+  // retirer silencieusement de son sous-menu actuel.
+  const handleDetectCategories = async () => {
+    setIsDetectingCategories(true);
+    try {
+      const uncategorized = items.filter((item) => !item.category);
+      const detections = await Promise.all(
+        uncategorized.map(async (item) => ({
+          item,
+          category: await detectLabelCategoryByReference(item.reference, getPdfFolder(itemType)),
+        }))
+      );
+      const matched = detections.filter((d): d is { item: LabelItem; category: string } => Boolean(d.category));
+      await Promise.all(matched.map((d) => updateItem(d.item.id, { category: d.category })));
+
+      if (matched.length === 0) {
+        alert('Aucune étiquette sans sous-catégorie ne correspond à un format connu.');
+        return;
+      }
+      const counts = matched.reduce<Record<string, number>>((acc, d) => {
+        acc[d.category] = (acc[d.category] ?? 0) + 1;
+        return acc;
+      }, {});
+      const summary = Object.entries(counts)
+        .map(([category, count]) => `${category} : ${count}`)
+        .join('\n');
+      alert(`${matched.length} étiquette(s) affectée(s) automatiquement à leur sous-catégorie :\n${summary}`);
+    } finally {
+      setIsDetectingCategories(false);
     }
   };
 
@@ -361,6 +398,22 @@ export const LabelsView: React.FC<LabelsViewProps> = ({ itemType = 'labels', fix
         </div>
 
         <div className="flex items-center gap-3">
+          {/* Réparation rétroactive : assigne la sous-catégorie de dimension des
+              étiquettes déjà importées avant l'apparition de cette fonctionnalité
+              (voir handleDetectCategories). Spécifique aux étiquettes, uniquement
+              depuis la vue générale (jamais depuis un sous-menu déjà scopé). */}
+          {!fixedCategory && itemType === 'labels' && items.length > 0 && (
+            <button
+              onClick={handleDetectCategories}
+              disabled={isDetectingCategories}
+              className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 disabled:bg-slate-50 text-slate-600 px-3 py-2 rounded-lg transition text-xs font-semibold"
+              title="Détecte le format (2 x 2,25 ou 2 x 3,25) des étiquettes qui n'ont pas encore de sous-catégorie, à partir de leur PDF maître"
+            >
+              {isDetectingCategories ? <Loader2 size={15} className="animate-spin" /> : <Ruler size={15} />}
+              Détecter les formats
+            </button>
+          )}
+
           {items.length > 0 && (
             <button
               onClick={handleClearItems}
