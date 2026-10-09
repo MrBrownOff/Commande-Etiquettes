@@ -1,15 +1,20 @@
 // src/components/Sidebar.tsx
 import React from 'react';
-import { LayoutDashboard, Flag, Bookmark, Store, Users, Save, Download, LogOut, TreeDeciduous } from 'lucide-react';
+import { LayoutDashboard, Flag, Bookmark, Store, Users, Save, Download, LogOut, TreeDeciduous, Ruler } from 'lucide-react';
 import { useAppStore } from '../store/store';
 import { signOutUser } from './AuthGate';
+import { PEUPLIER_CATEGORY, SIZE_2X225_CATEGORY, SIZE_2X325_CATEGORY } from '../constants/categories';
 
-// Nom de la sous-catégorie "Produits en peuplier" (voir LabelItem.category dans
-// store.ts) : constante partagée avec App.tsx pour que le filtre appliqué par
-// LabelsView corresponde exactement au compteur affiché ici.
-export const PEUPLIER_CATEGORY = 'Produits en peuplier';
-
-export type SidebarTab = 'labels' | 'labels-peuplier' | 'propack' | 'fanions' | 'stores' | 'access' | 'project';
+export type SidebarTab =
+  | 'labels'
+  | 'labels-peuplier'
+  | 'labels-2x225'
+  | 'labels-2x325'
+  | 'propack'
+  | 'fanions'
+  | 'stores'
+  | 'access'
+  | 'project';
 
 interface SidebarProps {
   currentTab: SidebarTab;
@@ -19,6 +24,8 @@ interface SidebarProps {
 export const Sidebar: React.FC<SidebarProps> = ({ currentTab, setCurrentTab }) => {
   const { labels, proPack, fanions, stores, users, exportProject } = useAppStore();
   const peuplierCount = labels.filter((l) => l.category === PEUPLIER_CATEGORY).length;
+  const size225Count = labels.filter((l) => l.category === SIZE_2X225_CATEGORY).length;
+  const size325Count = labels.filter((l) => l.category === SIZE_2X325_CATEGORY).length;
 
   return (
     <aside className="w-72 bg-slate-900 text-white flex flex-col shadow-lg select-none">
@@ -63,6 +70,40 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, setCurrentTab }) =
           </span>
           <span className="text-[11px] bg-slate-800 px-1.5 py-0.5 rounded-full text-slate-300">
             {peuplierCount}
+          </span>
+        </button>
+
+        {/* Sous-menus par format d'impression cible (voir LABEL_SIZE_BY_CATEGORY
+            dans printerExport.ts) */}
+        <button
+          onClick={() => setCurrentTab('labels-2x225')}
+          className={`w-full flex items-center justify-between pl-9 pr-3.5 py-2 rounded-lg font-medium text-xs transition ${currentTab === 'labels-2x225'
+            ? 'bg-orange-500/90 text-white shadow-sm'
+            : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+            }`}
+        >
+          <span className="flex items-center gap-2.5">
+            <Ruler size={15} />
+            2 x 2,25
+          </span>
+          <span className="text-[11px] bg-slate-800 px-1.5 py-0.5 rounded-full text-slate-300">
+            {size225Count}
+          </span>
+        </button>
+
+        <button
+          onClick={() => setCurrentTab('labels-2x325')}
+          className={`w-full flex items-center justify-between pl-9 pr-3.5 py-2 rounded-lg font-medium text-xs transition ${currentTab === 'labels-2x325'
+            ? 'bg-orange-500/90 text-white shadow-sm'
+            : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+            }`}
+        >
+          <span className="flex items-center gap-2.5">
+            <Ruler size={15} />
+            2 x 3,25
+          </span>
+          <span className="text-[11px] bg-slate-800 px-1.5 py-0.5 rounded-full text-slate-300">
+            {size325Count}
           </span>
         </button>
 
