@@ -1,5 +1,6 @@
 import { PDFDocument, PDFFont, StandardFonts, rgb } from 'pdf-lib';
 import { LabelItem, StoreItem } from '../store/store';
+import { LABEL_SIZE_BY_CATEGORY } from '../constants/categories';
 
 const PT_PER_MM = 72 / 25.4;
 const PAGE_WIDTH = 595.28; // A4 en points (210mm)
@@ -144,8 +145,6 @@ const embedItem = async (
 // suivie d'une page par exemplaire commandé de chaque item (étiquette ou Pro-Pack).
 export const generatePrinterPDF = async (items: LabelItem[], stores: StoreItem[], kind: PrintableKind = 'labels') => {
   const config = KIND_CONFIG[kind];
-  const itemWidthPt = config.widthIn * 72;
-  const itemHeightPt = config.heightIn * 72;
 
   const orderedItems = items.filter((l) => (l.quantity ?? 0) > 0);
   if (orderedItems.length === 0) {
@@ -234,6 +233,14 @@ export const generatePrinterPDF = async (items: LabelItem[], stores: StoreItem[]
     if (embedded.kind === 'jpg') {
       noCropMarksItems.push(item.reference);
     }
+
+    // Les étiquettes taguées avec une sous-catégorie de dimension (ex: "2 x 2,25",
+    // voir Sidebar.tsx) s'impriment au format qu'elle désigne plutôt qu'au format
+    // par défaut de KIND_CONFIG, qui reste le repli pour les étiquettes sans
+    // sous-catégorie ainsi que pour Pro-Pack et Fanions.
+    const sizeOverride = item.category ? LABEL_SIZE_BY_CATEGORY[item.category] : undefined;
+    const itemWidthPt = (sizeOverride?.widthIn ?? config.widthIn) * 72;
+    const itemHeightPt = (sizeOverride?.heightIn ?? config.heightIn) * 72;
 
     // Le ratio d'ajustement se base sur la TrimBox (la taille réelle une fois
     // coupée) quand elle est disponible, pas sur la page entière — sinon la

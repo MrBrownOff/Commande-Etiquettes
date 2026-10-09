@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Loader2 } from 'lucide-react';
-import { Sidebar, SidebarTab, PEUPLIER_CATEGORY } from './components/Sidebar';
+import { Sidebar, SidebarTab } from './components/Sidebar';
+import { PEUPLIER_CATEGORY, SIZE_2X225_CATEGORY, SIZE_2X325_CATEGORY } from './constants/categories';
 import { StoresView } from './components/StoresView';
 import { ProjectView } from './components/ProjectView';
 import { LabelsView } from './components/LabelsView';
@@ -39,6 +40,12 @@ function AppContent() {
         {currentTab === 'labels' && <LabelsView itemType="labels" />}
         {currentTab === 'labels-peuplier' && (
           <LabelsView itemType="labels" fixedCategory={PEUPLIER_CATEGORY} title={PEUPLIER_CATEGORY} />
+        )}
+        {currentTab === 'labels-2x225' && (
+          <LabelsView itemType="labels" fixedCategory={SIZE_2X225_CATEGORY} title={SIZE_2X225_CATEGORY} />
+        )}
+        {currentTab === 'labels-2x325' && (
+          <LabelsView itemType="labels" fixedCategory={SIZE_2X325_CATEGORY} title={SIZE_2X325_CATEGORY} />
         )}
         {currentTab === 'propack' && <LabelsView itemType="propack" />}
         {currentTab === 'fanions' && <LabelsView itemType="fanions" />}
