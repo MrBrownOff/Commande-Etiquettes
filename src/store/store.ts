@@ -175,7 +175,7 @@ const FANIONS_COLLECTION = 'fanionsItems';
 const PRINT_HISTORY_COLLECTION = 'printHistory';
 const PROPACK_PRINT_HISTORY_COLLECTION = 'proPackPrintHistory';
 const FANIONS_PRINT_HISTORY_COLLECTION = 'fanionsItemsPrintHistory';
-const PRINT_HISTORY_LIMIT = 50;
+const PRINT_HISTORY_LIMIT = 200;
 
 // Quantités personnelles des représentants, une collection par catégorie : chaque
 // document est identifié par `${uid}_${itemId}` et ne contient que la quantité de
