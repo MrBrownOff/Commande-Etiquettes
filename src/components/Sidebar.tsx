@@ -1,6 +1,6 @@
 // src/components/Sidebar.tsx
 import React from 'react';
-import { LayoutDashboard, Flag, Bookmark, Store, Users, Save, Download, LogOut, TreeDeciduous, Ruler, History } from 'lucide-react';
+import { LayoutDashboard, Flag, Bookmark, Store, Users, Save, Download, LogOut, TreeDeciduous, Ruler, History, FileUp } from 'lucide-react';
 import { useAppStore } from '../store/store';
 import { signOutUser } from './AuthGate';
 import { PEUPLIER_CATEGORY, SIZE_2X225_CATEGORY, SIZE_2X325_CATEGORY } from '../constants/categories';
@@ -14,6 +14,7 @@ export type SidebarTab =
   | 'fanions'
   | 'stores'
   | 'store-history'
+  | 'pdf-import'
   | 'access'
   | 'project';
 
@@ -165,6 +166,17 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, setCurrentTab }) =
         >
           <History size={18} />
           Historique par magasin
+        </button>
+
+        <button
+          onClick={() => setCurrentTab('pdf-import')}
+          className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-lg font-medium text-sm transition ${currentTab === 'pdf-import'
+            ? 'bg-orange-500 text-white shadow-sm'
+            : 'text-slate-300 hover:bg-slate-800'
+            }`}
+        >
+          <FileUp size={18} />
+          Importer un ancien PDF
         </button>
 
         <button

@@ -7,6 +7,10 @@ export const initOCR = async () => {
     worker = await Tesseract.createWorker();
     await worker.loadLanguage('eng');
     await worker.initialize('eng');
+    // SINGLE_BLOCK (plutôt que le mode AUTO par défaut) donne des résultats
+    // nettement plus fiables sur nos étiquettes : texte dense, peu de mise en
+    // page complexe à segmenter — validé sur un vrai PDF d'archive (2020).
+    await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK });
   }
   return worker;
 };
