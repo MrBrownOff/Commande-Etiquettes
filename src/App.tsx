@@ -3,6 +3,7 @@ import { Loader2 } from 'lucide-react';
 import { Sidebar, SidebarTab } from './components/Sidebar';
 import { PEUPLIER_CATEGORY, SIZE_2X225_CATEGORY, SIZE_2X325_CATEGORY } from './constants/categories';
 import { StoresView } from './components/StoresView';
+import { StoreHistoryView } from './components/StoreHistoryView';
 import { ProjectView } from './components/ProjectView';
 import { LabelsView } from './components/LabelsView';
 import { RepresentantView } from './components/RepresentantView';
@@ -50,6 +51,7 @@ function AppContent() {
         {currentTab === 'propack' && <LabelsView itemType="propack" />}
         {currentTab === 'fanions' && <LabelsView itemType="fanions" />}
         {currentTab === 'stores' && <StoresView />}
+        {currentTab === 'store-history' && <StoreHistoryView />}
         {currentTab === 'access' && <AccessView />}
         {currentTab === 'project' && <ProjectView />}
       </main>

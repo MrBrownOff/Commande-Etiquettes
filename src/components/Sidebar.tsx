@@ -1,6 +1,6 @@
 // src/components/Sidebar.tsx
 import React from 'react';
-import { LayoutDashboard, Flag, Bookmark, Store, Users, Save, Download, LogOut, TreeDeciduous, Ruler } from 'lucide-react';
+import { LayoutDashboard, Flag, Bookmark, Store, Users, Save, Download, LogOut, TreeDeciduous, Ruler, History } from 'lucide-react';
 import { useAppStore } from '../store/store';
 import { signOutUser } from './AuthGate';
 import { PEUPLIER_CATEGORY, SIZE_2X225_CATEGORY, SIZE_2X325_CATEGORY } from '../constants/categories';
@@ -13,6 +13,7 @@ export type SidebarTab =
   | 'propack'
   | 'fanions'
   | 'stores'
+  | 'store-history'
   | 'access'
   | 'project';
 
@@ -153,6 +154,17 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, setCurrentTab }) =
           <span className="text-xs bg-slate-800 px-2 py-0.5 rounded-full text-slate-300">
             {stores.length}
           </span>
+        </button>
+
+        <button
+          onClick={() => setCurrentTab('store-history')}
+          className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-lg font-medium text-sm transition ${currentTab === 'store-history'
+            ? 'bg-orange-500 text-white shadow-sm'
+            : 'text-slate-300 hover:bg-slate-800'
+            }`}
+        >
+          <History size={18} />
+          Historique par magasin
         </button>
 
         <button
