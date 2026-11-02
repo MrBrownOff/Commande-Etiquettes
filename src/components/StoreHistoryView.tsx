@@ -1,6 +1,6 @@
 // src/components/StoreHistoryView.tsx
 import React, { useMemo, useState } from 'react';
-import { History, Store } from 'lucide-react';
+import { History, Search, Store } from 'lucide-react';
 import { PrintHistoryEntry, useAppStore } from '../store/store';
 
 interface CatalogConfig {
@@ -28,6 +28,7 @@ const formatDate = (entry: PrintHistoryEntry): string => {
 export const StoreHistoryView: React.FC = () => {
   const { stores, printHistory, proPackPrintHistory, fanionsPrintHistory } = useAppStore();
   const [selectedStoreId, setSelectedStoreId] = useState('');
+  const [referenceSearch, setReferenceSearch] = useState('');
 
   const sortedStores = useMemo(
     () => [...stores].sort((a, b) => a.name.localeCompare(b.name, 'fr-CA')),
@@ -68,6 +69,12 @@ export const StoreHistoryView: React.FC = () => {
     return result.sort((a, b) => b.dateMs - a.dateMs);
   }, [selectedStore, printHistory, proPackPrintHistory, fanionsPrintHistory]);
 
+  const filteredRows = useMemo(() => {
+    const query = referenceSearch.trim().toLowerCase();
+    if (!query) return rows;
+    return rows.filter((row) => row.reference.toLowerCase().includes(query));
+  }, [rows, referenceSearch]);
+
   return (
     <div className="p-8 space-y-6">
       <div>
@@ -89,7 +96,10 @@ export const StoreHistoryView: React.FC = () => {
           </span>
           <select
             value={selectedStoreId}
-            onChange={(e) => setSelectedStoreId(e.target.value)}
+            onChange={(e) => {
+              setSelectedStoreId(e.target.value);
+              setReferenceSearch('');
+            }}
             className="w-full max-w-md bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-orange-500"
           >
             <option value="">Sélectionner un magasin...</option>
@@ -101,10 +111,27 @@ export const StoreHistoryView: React.FC = () => {
           </select>
         </label>
 
+        {selectedStore && rows.length > 0 && (
+          <div className="relative max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+            <input
+              type="text"
+              value={referenceSearch}
+              onChange={(e) => setReferenceSearch(e.target.value)}
+              placeholder="Rechercher une référence..."
+              className="w-full pl-9 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-orange-500"
+            />
+          </div>
+        )}
+
         {selectedStore && (
           rows.length === 0 ? (
             <p className="text-sm text-gray-400 italic">
               Aucune impression trouvée pour « {selectedStore.name} » dans l'historique conservé.
+            </p>
+          ) : filteredRows.length === 0 ? (
+            <p className="text-sm text-gray-400 italic">
+              Aucune référence ne correspond à « {referenceSearch} » pour « {selectedStore.name} ».
             </p>
           ) : (
             <div className="border border-gray-100 rounded-lg overflow-hidden">
@@ -118,7 +145,7 @@ export const StoreHistoryView: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((row, i) => (
+                  {filteredRows.map((row, i) => (
                     <tr key={i} className="border-t border-gray-100">
                       <td className="py-2 px-3 text-gray-500 whitespace-nowrap">{row.date}</td>
                       <td className="py-2 px-3 text-gray-500">{row.catalog}</td>
