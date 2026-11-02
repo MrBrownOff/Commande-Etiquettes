@@ -4,6 +4,7 @@ import { Sidebar, SidebarTab } from './components/Sidebar';
 import { PEUPLIER_CATEGORY, SIZE_2X225_CATEGORY, SIZE_2X325_CATEGORY } from './constants/categories';
 import { StoresView } from './components/StoresView';
 import { StoreHistoryView } from './components/StoreHistoryView';
+import { PdfImportView } from './components/PdfImportView';
 import { ProjectView } from './components/ProjectView';
 import { LabelsView } from './components/LabelsView';
 import { RepresentantView } from './components/RepresentantView';
@@ -52,6 +53,7 @@ function AppContent() {
         {currentTab === 'fanions' && <LabelsView itemType="fanions" />}
         {currentTab === 'stores' && <StoresView />}
         {currentTab === 'store-history' && <StoreHistoryView />}
+        {currentTab === 'pdf-import' && <PdfImportView />}
         {currentTab === 'access' && <AccessView />}
         {currentTab === 'project' && <ProjectView />}
       </main>
