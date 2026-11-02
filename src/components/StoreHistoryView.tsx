@@ -4,29 +4,40 @@ import { CheckSquare, History, Loader2, Printer, Search, Square, Store } from 'l
 import { LabelItem, PrintHistoryEntry, useAppStore } from '../store/store';
 import { generatePrinterPDF, PrintableKind } from '../utils/printerExport';
 
-interface CatalogHistoryConfig {
-  label: string;
-  history: PrintHistoryEntry[];
-}
-
-interface HistoryRow {
-  date: string;
-  dateMs: number;
-  catalog: string;
-  reference: string;
-  quantity: number;
-}
-
-interface PrintableCatalogConfig {
+interface CatalogConfig {
   kind: PrintableKind;
   label: string;
   items: LabelItem[];
+  history: PrintHistoryEntry[];
   logRun: (entry: {
     totalReferences: number;
     totalQuantity: number;
     storeNames: string[];
     items: { reference: string; quantity: number; storeNames: string[] }[];
   }) => Promise<void>;
+}
+
+interface HistoryRow {
+  date: string;
+  dateMs: number;
+  kind: PrintableKind;
+  catalog: string;
+  reference: string;
+  quantity: number;
+}
+
+// Référence déjà imprimée au moins une fois pour ce magasin : la quantité
+// réimprimable est éditable, initialisée à la dernière quantité imprimée.
+interface ReprintCandidate {
+  reference: string;
+  lastQuantity: number;
+  lastDate: string;
+  matchedItem: LabelItem | undefined; // undefined si la référence n'existe plus dans le catalogue actuel
+}
+
+interface ReprintSelectionState {
+  checked: boolean;
+  quantity: number;
 }
 
 const formatDate = (entry: PrintHistoryEntry): string => {
@@ -36,6 +47,12 @@ const formatDate = (entry: PrintHistoryEntry): string => {
     timeStyle: 'short',
   });
 };
+
+const emptyByKind = <T,>(value: () => T): Record<PrintableKind, T> => ({
+  labels: value(),
+  propack: value(),
+  fanions: value(),
+});
 
 export const StoreHistoryView: React.FC = () => {
   const {
@@ -52,11 +69,9 @@ export const StoreHistoryView: React.FC = () => {
   } = useAppStore();
   const [selectedStoreId, setSelectedStoreId] = useState('');
   const [referenceSearch, setReferenceSearch] = useState('');
-  const [selectedItemIds, setSelectedItemIds] = useState<Record<PrintableKind, string[]>>({
-    labels: [],
-    propack: [],
-    fanions: [],
-  });
+  const [reprintSelection, setReprintSelection] = useState<Record<PrintableKind, Record<string, ReprintSelectionState>>>(
+    emptyByKind(() => ({}))
+  );
   const [generatingKind, setGeneratingKind] = useState<PrintableKind | null>(null);
 
   const sortedStores = useMemo(
@@ -69,64 +84,122 @@ export const StoreHistoryView: React.FC = () => {
   // Catalogues partageant tous la même structure d'historique et de réimpression
   // (voir store.ts / printerExport.ts) : un même magasin peut apparaître dans
   // n'importe lequel des trois.
-  const printableCatalogs: PrintableCatalogConfig[] = [
-    { kind: 'labels', label: 'Étiquettes', items: labels, logRun: logPrintRun },
-    { kind: 'propack', label: 'Pro-Pack', items: proPack, logRun: logProPackPrintRun },
-    { kind: 'fanions', label: 'Fanions', items: fanions, logRun: logFanionsPrintRun },
+  const catalogs: CatalogConfig[] = [
+    { kind: 'labels', label: 'Étiquettes', items: labels, history: printHistory, logRun: logPrintRun },
+    { kind: 'propack', label: 'Pro-Pack', items: proPack, history: proPackPrintHistory, logRun: logProPackPrintRun },
+    { kind: 'fanions', label: 'Fanions', items: fanions, history: fanionsPrintHistory, logRun: logFanionsPrintRun },
   ];
 
-  const historyCatalogs: CatalogHistoryConfig[] = [
-    { label: 'Étiquettes', history: printHistory },
-    { label: 'Pro-Pack', history: proPackPrintHistory },
-    { label: 'Fanions', history: fanionsPrintHistory },
-  ];
-
-  // Références actuellement assignées au magasin sélectionné, catalogue par
-  // catalogue — seules celles avec une quantité renseignée sont imprimables
-  // (voir generatePrinterPDF, qui rejette sinon).
-  const eligibleItemsByKind = useMemo(() => {
-    const result: Record<PrintableKind, LabelItem[]> = { labels: [], propack: [], fanions: [] };
-    if (!selectedStore) return result;
-    for (const { kind, items } of printableCatalogs) {
-      result[kind] = items
-        .filter((item) => item.stores.includes(selectedStore.id) && (item.quantity ?? 0) > 0)
-        .sort((a, b) => a.reference.localeCompare(b.reference, 'fr-CA'));
+  // Le rapprochement avec l'historique se fait par nom de magasin (seule
+  // information conservée au moment de l'impression, pas l'ID) : un magasin
+  // renommé depuis ne retrouvera pas ses impressions antérieures sous son
+  // nouveau nom.
+  const rows: HistoryRow[] = useMemo(() => {
+    if (!selectedStore) return [];
+    const result: HistoryRow[] = [];
+    for (const { kind, label, history } of catalogs) {
+      for (const entry of history) {
+        for (const item of entry.items) {
+          if (item.storeNames.includes(selectedStore.name)) {
+            result.push({
+              date: formatDate(entry),
+              dateMs: entry.createdAt?.toMillis() ?? 0,
+              kind,
+              catalog: label,
+              reference: item.reference,
+              quantity: item.quantity,
+            });
+          }
+        }
+      }
     }
-    return result;
-  }, [selectedStore, labels, proPack, fanions]);
+    return result.sort((a, b) => b.dateMs - a.dateMs);
+  }, [selectedStore, printHistory, proPackPrintHistory, fanionsPrintHistory]);
 
-  // Présélectionne tout ce qui est assigné au magasin dès qu'on le choisit, pour
-  // que « Générer le PDF » reproduise par défaut l'ensemble de ses étiquettes.
+  // Les étiquettes réimprimables sont uniquement celles déjà apparues dans
+  // l'historique de ce magasin (pas les assignations actuelles du catalogue) :
+  // une référence par catalogue, dédupliquée sur son occurrence la plus
+  // récente (rows est déjà trié du plus récent au plus ancien).
+  const reprintCandidatesByKind = useMemo(() => {
+    const result = emptyByKind<ReprintCandidate[]>(() => []);
+    const catalogItemsByKind: Record<PrintableKind, LabelItem[]> = { labels, propack: proPack, fanions };
+    const seen = emptyByKind<Set<string>>(() => new Set<string>());
+    for (const row of rows) {
+      if (seen[row.kind].has(row.reference)) continue;
+      seen[row.kind].add(row.reference);
+      result[row.kind].push({
+        reference: row.reference,
+        lastQuantity: row.quantity,
+        lastDate: row.date,
+        matchedItem: catalogItemsByKind[row.kind].find((i) => i.reference === row.reference),
+      });
+    }
+    (Object.keys(result) as PrintableKind[]).forEach((kind) =>
+      result[kind].sort((a, b) => a.reference.localeCompare(b.reference, 'fr-CA'))
+    );
+    return result;
+  }, [rows, labels, proPack, fanions]);
+
+  // Présélectionne (cochées, quantité = dernière quantité imprimée) toutes les
+  // références encore présentes dans le catalogue, dès qu'on choisit le magasin.
   useEffect(() => {
-    setSelectedItemIds({
-      labels: eligibleItemsByKind.labels.map((i) => i.id),
-      propack: eligibleItemsByKind.propack.map((i) => i.id),
-      fanions: eligibleItemsByKind.fanions.map((i) => i.id),
+    const next = emptyByKind<Record<string, ReprintSelectionState>>(() => ({}));
+    (Object.keys(reprintCandidatesByKind) as PrintableKind[]).forEach((kind) => {
+      for (const candidate of reprintCandidatesByKind[kind]) {
+        next[kind][candidate.reference] = {
+          checked: Boolean(candidate.matchedItem),
+          quantity: candidate.lastQuantity,
+        };
+      }
     });
+    setReprintSelection(next);
   }, [selectedStore?.id]);
 
-  const toggleItem = (kind: PrintableKind, id: string) => {
-    setSelectedItemIds((prev) => ({
+  const toggleCandidate = (kind: PrintableKind, reference: string) => {
+    setReprintSelection((prev) => ({
       ...prev,
-      [kind]: prev[kind].includes(id) ? prev[kind].filter((i) => i !== id) : [...prev[kind], id],
+      [kind]: {
+        ...prev[kind],
+        [reference]: { ...prev[kind][reference], checked: !prev[kind][reference]?.checked },
+      },
+    }));
+  };
+
+  const setCandidateQuantity = (kind: PrintableKind, reference: string, quantity: number) => {
+    setReprintSelection((prev) => ({
+      ...prev,
+      [kind]: {
+        ...prev[kind],
+        [reference]: { ...prev[kind][reference], quantity },
+      },
     }));
   };
 
   const toggleAll = (kind: PrintableKind) => {
-    const allIds = eligibleItemsByKind[kind].map((i) => i.id);
-    setSelectedItemIds((prev) => ({
-      ...prev,
-      [kind]: prev[kind].length === allIds.length ? [] : allIds,
-    }));
+    const available = reprintCandidatesByKind[kind].filter((c) => c.matchedItem);
+    const allChecked = available.every((c) => reprintSelection[kind][c.reference]?.checked);
+    setReprintSelection((prev) => {
+      const next = { ...prev[kind] };
+      for (const candidate of available) {
+        next[candidate.reference] = { ...next[candidate.reference], checked: !allChecked };
+      }
+      return { ...prev, [kind]: next };
+    });
   };
 
-  const handleGenerate = async (config: PrintableCatalogConfig) => {
-    const selectedItems = config.items.filter((item) => selectedItemIds[config.kind].includes(item.id));
-    if (selectedItems.length === 0) return;
+  const handleGenerate = async (config: CatalogConfig) => {
+    const selection = reprintSelection[config.kind];
+    const itemsToPrint: LabelItem[] = [];
+    for (const candidate of reprintCandidatesByKind[config.kind]) {
+      const sel = selection[candidate.reference];
+      if (!sel?.checked || !candidate.matchedItem || sel.quantity <= 0) continue;
+      itemsToPrint.push({ ...candidate.matchedItem, quantity: sel.quantity });
+    }
+    if (itemsToPrint.length === 0) return;
 
     setGeneratingKind(config.kind);
     try {
-      const { missingLabels, noCropMarksLabels, summary } = await generatePrinterPDF(selectedItems, stores, config.kind);
+      const { missingLabels, noCropMarksLabels, summary } = await generatePrinterPDF(itemsToPrint, stores, config.kind);
       await config.logRun(summary);
       if (missingLabels.length > 0) {
         alert(
@@ -145,31 +218,6 @@ export const StoreHistoryView: React.FC = () => {
     }
   };
 
-  // Le rapprochement avec l'historique se fait par nom de magasin (seule
-  // information conservée au moment de l'impression, pas l'ID) : un magasin
-  // renommé depuis ne retrouvera pas ses impressions antérieures sous son
-  // nouveau nom.
-  const rows: HistoryRow[] = useMemo(() => {
-    if (!selectedStore) return [];
-    const result: HistoryRow[] = [];
-    for (const { label, history } of historyCatalogs) {
-      for (const entry of history) {
-        for (const item of entry.items) {
-          if (item.storeNames.includes(selectedStore.name)) {
-            result.push({
-              date: formatDate(entry),
-              dateMs: entry.createdAt?.toMillis() ?? 0,
-              catalog: label,
-              reference: item.reference,
-              quantity: item.quantity,
-            });
-          }
-        }
-      }
-    }
-    return result.sort((a, b) => b.dateMs - a.dateMs);
-  }, [selectedStore, printHistory, proPackPrintHistory, fanionsPrintHistory]);
-
   const filteredRows = useMemo(() => {
     const query = referenceSearch.trim().toLowerCase();
     if (!query) return rows;
@@ -184,8 +232,8 @@ export const StoreHistoryView: React.FC = () => {
           Historique par magasin
         </h1>
         <p className="text-sm text-gray-500 mt-1">
-          Choisis un magasin pour réimprimer ses étiquettes assignées ou consulter ce qui lui a déjà été
-          imprimé, tous catalogues confondus (étiquettes, Pro-Pack, fanions).
+          Choisis un magasin pour réimprimer ce qui lui a déjà été imprimé (en ajustant au besoin les
+          quantités) ou consulter son historique, tous catalogues confondus (étiquettes, Pro-Pack, fanions).
         </p>
       </div>
 
@@ -220,62 +268,94 @@ export const StoreHistoryView: React.FC = () => {
             Réimprimer pour « {selectedStore.name} »
           </h2>
 
-          {printableCatalogs.every(({ kind }) => eligibleItemsByKind[kind].length === 0) ? (
+          {rows.length === 0 ? (
             <p className="text-sm text-gray-400 italic">
-              Aucune référence avec quantité renseignée n'est actuellement assignée à ce magasin.
+              Aucun historique d'impression pour ce magasin — rien à réimprimer.
             </p>
           ) : (
-            printableCatalogs.map((config) => {
-              const eligible = eligibleItemsByKind[config.kind];
-              if (eligible.length === 0) return null;
-              const selected = selectedItemIds[config.kind];
-              const allSelected = selected.length === eligible.length;
+            catalogs.map((config) => {
+              const candidates = reprintCandidatesByKind[config.kind];
+              if (candidates.length === 0) return null;
+              const selection = reprintSelection[config.kind];
+              const available = candidates.filter((c) => c.matchedItem);
+              const checkedCount = available.filter((c) => selection[c.reference]?.checked).length;
+              const allChecked = available.length > 0 && checkedCount === available.length;
               const isGenerating = generatingKind === config.kind;
+              const canGenerate = available.some(
+                (c) => selection[c.reference]?.checked && (selection[c.reference]?.quantity ?? 0) > 0
+              );
 
               return (
                 <div key={config.kind} className="border border-gray-100 rounded-lg overflow-hidden">
                   <div className="flex items-center justify-between px-4 py-2.5 bg-gray-50 border-b border-gray-100">
                     <button
                       onClick={() => toggleAll(config.kind)}
-                      className="flex items-center gap-2 text-sm font-semibold text-gray-700 hover:text-orange-600 transition"
+                      disabled={available.length === 0}
+                      className="flex items-center gap-2 text-sm font-semibold text-gray-700 hover:text-orange-600 transition disabled:opacity-50"
                     >
-                      {allSelected ? (
+                      {allChecked ? (
                         <CheckSquare size={16} className="text-orange-500" />
                       ) : (
                         <Square size={16} className="text-gray-400" />
                       )}
                       {config.label}
                       <span className="text-xs font-normal text-gray-400">
-                        ({selected.length}/{eligible.length})
+                        ({checkedCount}/{available.length})
                       </span>
                     </button>
                     <button
                       onClick={() => handleGenerate(config)}
-                      disabled={selected.length === 0 || generatingKind !== null}
+                      disabled={!canGenerate || generatingKind !== null}
                       className="flex items-center gap-1.5 bg-orange-500 hover:bg-orange-600 disabled:bg-orange-200 text-white px-3 py-1.5 rounded-lg transition text-xs font-semibold"
                     >
                       {isGenerating ? <Loader2 size={14} className="animate-spin" /> : <Printer size={14} />}
                       Générer le PDF
                     </button>
                   </div>
-                  <div className="max-h-56 overflow-y-auto divide-y divide-gray-50">
-                    {eligible.map((item) => (
-                      <label
-                        key={item.id}
-                        className="flex items-center justify-between px-4 py-1.5 text-sm hover:bg-gray-50 cursor-pointer"
-                      >
-                        <span className="flex items-center gap-2">
-                          <input
-                            type="checkbox"
-                            checked={selected.includes(item.id)}
-                            onChange={() => toggleItem(config.kind, item.id)}
-                            className="rounded text-orange-500 focus:ring-orange-400 h-3.5 w-3.5"
-                          />
-                          <span className="font-mono text-gray-700">{item.reference}</span>
-                        </span>
-                        <span className="text-xs text-gray-400">Qté {item.quantity}</span>
-                      </label>
-                    ))}
+                  <div className="max-h-64 overflow-y-auto divide-y divide-gray-50">
+                    {candidates.map((candidate) => {
+                      const sel = selection[candidate.reference];
+                      const isAvailable = Boolean(candidate.matchedItem);
+                      return (
+                        <div
+                          key={candidate.reference}
+                          className={`flex items-center justify-between px-4 py-1.5 text-sm ${isAvailable ? 'hover:bg-gray-50' : 'opacity-50'}`}
+                        >
+                          <label className="flex items-center gap-2 min-w-0 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(sel?.checked)}
+                              disabled={!isAvailable}
+                              onChange={() => toggleCandidate(config.kind, candidate.reference)}
+                              className="rounded text-orange-500 focus:ring-orange-400 h-3.5 w-3.5 flex-shrink-0"
+                            />
+                            <span className="font-mono text-gray-700 truncate">{candidate.reference}</span>
+                            {!isAvailable && (
+                              <span className="text-[11px] text-gray-400 italic flex-shrink-0">
+                                introuvable dans le catalogue actuel
+                              </span>
+                            )}
+                          </label>
+                          <span className="flex items-center gap-2 flex-shrink-0">
+                            <span className="text-[11px] text-gray-400">
+                              dernière fois : {candidate.lastQuantity} ({candidate.lastDate})
+                            </span>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              maxLength={3}
+                              disabled={!isAvailable}
+                              value={sel?.quantity ?? 0}
+                              onChange={(e) => {
+                                const digitsOnly = e.target.value.replace(/\D/g, '').slice(0, 3);
+                                setCandidateQuantity(config.kind, candidate.reference, digitsOnly === '' ? 0 : Number(digitsOnly));
+                              }}
+                              className="w-14 text-center bg-white border border-gray-200 rounded px-1.5 py-1 text-xs font-semibold text-gray-700 focus:outline-none focus:ring-1 focus:ring-orange-500 disabled:bg-gray-100"
+                            />
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               );
