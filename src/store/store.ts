@@ -140,6 +140,7 @@ interface AppState {
   removeStoresFromLabels: (labelIds: string[], storeIds: string[]) => Promise<void>;
   clearLabels: () => Promise<void>;
   logPrintRun: (entry: PrintRunEntry) => Promise<void>;
+  clearPrintHistory: () => Promise<void>;
 
   // Actions Pro-Pack (catalogue indépendant des étiquettes, même structure)
   addProPackBatch: (items: LabelItem[]) => Promise<void>;
@@ -149,6 +150,7 @@ interface AppState {
   removeStoresFromProPack: (itemIds: string[], storeIds: string[]) => Promise<void>;
   clearProPack: () => Promise<void>;
   logProPackPrintRun: (entry: PrintRunEntry) => Promise<void>;
+  clearProPackPrintHistory: () => Promise<void>;
 
   // Actions Fanions (catalogue indépendant des étiquettes et du Pro-Pack, même structure)
   addFanionsBatch: (items: LabelItem[]) => Promise<void>;
@@ -158,6 +160,7 @@ interface AppState {
   removeStoresFromFanions: (itemIds: string[], storeIds: string[]) => Promise<void>;
   clearFanions: () => Promise<void>;
   logFanionsPrintRun: (entry: PrintRunEntry) => Promise<void>;
+  clearFanionsPrintHistory: () => Promise<void>;
 
   // Gestion de Projet (JSON)
   exportProject: () => void;
@@ -261,6 +264,16 @@ const logRunTo = async (historyCollectionName: string, entry: PrintRunEntry) => 
   await addDoc(collection(db, historyCollectionName), {
     ...entry,
     createdAt: serverTimestamp(),
+  });
+};
+
+// Relit la collection entière plutôt que le state local, plafonné aux
+// PRINT_HISTORY_LIMIT derniers lots : sinon les lots plus anciens survivraient.
+// Ne touche jamais aux catalogues ni aux assignations magasin/étiquette.
+const clearHistoryCollection = async (historyCollectionName: string) => {
+  const snapshot = await getDocs(collection(db, historyCollectionName));
+  await commitInChunks(snapshot.docs, (batch, d) => {
+    batch.delete(d.ref);
   });
 };
 
@@ -454,6 +467,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
   removeStoresFromLabels: (labelIds, storeIds) => removeStoresFrom(LABELS_COLLECTION, labelIds, storeIds),
   clearLabels: () => clearItemsFrom(LABELS_COLLECTION, get().labels),
   logPrintRun: (entry) => logRunTo(PRINT_HISTORY_COLLECTION, entry),
+  clearPrintHistory: () => clearHistoryCollection(PRINT_HISTORY_COLLECTION),
 
   addProPackBatch: (newItems) => addItemsBatchTo(PROPACK_COLLECTION, newItems),
 
@@ -480,6 +494,13 @@ export const useAppStore = create<AppState>()((set, get) => ({
   removeStoresFromProPack: (itemIds, storeIds) => removeStoresFrom(PROPACK_COLLECTION, itemIds, storeIds),
   clearProPack: () => clearItemsFrom(PROPACK_COLLECTION, get().proPack),
   logProPackPrintRun: (entry) => logRunTo(PROPACK_PRINT_HISTORY_COLLECTION, entry),
+  clearProPackPrintHistory: async () => {
+    // Empêche la migration de l'ancien historique « fanionPrintHistory », qui se
+    // déclenche sur un snapshot vide : sans ça, vider l'historique le ferait
+    // ressusciter depuis l'ancienne collection.
+    proPackHistoryMigrated = true;
+    await clearHistoryCollection(PROPACK_PRINT_HISTORY_COLLECTION);
+  },
 
   addFanionsBatch: (newItems) => addItemsBatchTo(FANIONS_COLLECTION, newItems),
 
@@ -506,6 +527,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
   removeStoresFromFanions: (itemIds, storeIds) => removeStoresFrom(FANIONS_COLLECTION, itemIds, storeIds),
   clearFanions: () => clearItemsFrom(FANIONS_COLLECTION, get().fanions),
   logFanionsPrintRun: (entry) => logRunTo(FANIONS_PRINT_HISTORY_COLLECTION, entry),
+  clearFanionsPrintHistory: () => clearHistoryCollection(FANIONS_PRINT_HISTORY_COLLECTION),
 
   // Exporter tout le projet en JSON (étiquettes, Pro-Pack, Fanions et magasins)
   exportProject: () => {

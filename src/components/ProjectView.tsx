@@ -20,6 +20,9 @@ export const ProjectView: React.FC = () => {
     logPrintRun,
     logProPackPrintRun,
     logFanionsPrintRun,
+    clearPrintHistory,
+    clearProPackPrintHistory,
+    clearFanionsPrintHistory,
   } = useAppStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -247,7 +250,7 @@ export const ProjectView: React.FC = () => {
         </button>
       </div>
 
-      <PrintHistoryList entries={printHistory} />
+      <PrintHistoryList entries={printHistory} onClear={clearPrintHistory} />
 
       <div className="pt-4 border-t border-gray-200">
         <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
@@ -299,7 +302,7 @@ export const ProjectView: React.FC = () => {
         </button>
       </div>
 
-      <PrintHistoryList entries={proPackPrintHistory} noun="Pro-Pack" />
+      <PrintHistoryList entries={proPackPrintHistory} noun="Pro-Pack" onClear={clearProPackPrintHistory} />
 
       <div className="pt-4 border-t border-gray-200">
         <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
@@ -351,7 +354,7 @@ export const ProjectView: React.FC = () => {
         </button>
       </div>
 
-      <PrintHistoryList entries={fanionsPrintHistory} noun="fanion" />
+      <PrintHistoryList entries={fanionsPrintHistory} noun="fanion" onClear={clearFanionsPrintHistory} />
     </div>
   );
 };

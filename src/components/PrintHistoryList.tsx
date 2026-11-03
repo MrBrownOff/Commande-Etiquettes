@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
-import { ChevronDown, ChevronRight, History } from 'lucide-react';
+import { ChevronDown, ChevronRight, History, Loader2, Trash2 } from 'lucide-react';
 import { PrintHistoryEntry } from '../store/store';
 
 interface PrintHistoryListProps {
   entries: PrintHistoryEntry[];
   noun?: string;
+  onClear?: () => Promise<void>;
 }
 
 const formatDate = (entry: PrintHistoryEntry): string => {
@@ -15,14 +16,44 @@ const formatDate = (entry: PrintHistoryEntry): string => {
   });
 };
 
-export const PrintHistoryList: React.FC<PrintHistoryListProps> = ({ entries, noun = 'étiquette' }) => {
+export const PrintHistoryList: React.FC<PrintHistoryListProps> = ({ entries, noun = 'étiquette', onClear }) => {
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [isClearing, setIsClearing] = useState(false);
+
+  const handleClear = async () => {
+    if (!onClear) return;
+    const confirmed = window.confirm(
+      "Vider tout l'historique des impressions de ce catalogue ? Cette action est définitive. " +
+        'Les assignations étiquettes/magasins ne sont pas touchées.'
+    );
+    if (!confirmed) return;
+    setIsClearing(true);
+    try {
+      await onClear();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Impossible de vider l'historique.");
+    } finally {
+      setIsClearing(false);
+    }
+  };
 
   return (
     <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-xs space-y-4">
-      <h2 className="text-base font-semibold text-gray-800 flex items-center gap-2">
-        <History size={18} className="text-slate-700" /> Historique des impressions
-      </h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-base font-semibold text-gray-800 flex items-center gap-2">
+          <History size={18} className="text-slate-700" /> Historique des impressions
+        </h2>
+        {onClear && (
+          <button
+            onClick={handleClear}
+            disabled={isClearing || entries.length === 0}
+            className="flex items-center gap-1.5 text-xs font-semibold text-red-600 hover:text-red-700 disabled:text-gray-300 transition"
+          >
+            {isClearing ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+            Vider l'historique
+          </button>
+        )}
+      </div>
       <p className="text-xs text-gray-500">
         Trace des informations contenues dans les derniers PDF générés (les fichiers eux-mêmes ne sont pas
         conservés, seul leur contenu est historisé).
