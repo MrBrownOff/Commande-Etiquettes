@@ -17,7 +17,6 @@ interface ImportRow {
   pageNumber: number;
   thumbnailDataUrl: string;
   reference: string;
-  matchKind: 'exact' | 'fuzzy' | 'none';
   checked: boolean;
   quantity: number;
 }
@@ -55,6 +54,10 @@ export const PdfImportView: React.FC = () => {
   const referenceList = useMemo(() => catalogItems.map((i) => i.reference), [catalogItems]);
 
   const handleFile = async (file: File) => {
+    if (!selectedStore) {
+      alert('Sélectionne un magasin avant de charger le PDF.');
+      return;
+    }
     setRows([]);
     setFileName(file.name);
     setIsProcessing(true);
@@ -67,8 +70,7 @@ export const PdfImportView: React.FC = () => {
           id: crypto.randomUUID(),
           pageNumber: page.pageNumber,
           thumbnailDataUrl: page.thumbnailDataUrl,
-          reference: match?.reference ?? '',
-          matchKind: match ? (match.exact ? 'exact' : 'fuzzy') : 'none',
+          reference: match ?? '',
           checked: Boolean(match),
           quantity: 1,
         };
@@ -85,7 +87,8 @@ export const PdfImportView: React.FC = () => {
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...fields } : r)));
   };
 
-  const matchedCount = rows.filter((r) => r.checked && catalogItems.some((i) => i.reference === r.reference.trim())).length;
+  const recognizedCount = rows.filter((r) => r.reference).length;
+  const matchedCount = rows.filter((r) => r.reference && r.checked && r.quantity > 0).length;
 
   const handleGenerate = async () => {
     if (!selectedStore) {
@@ -98,8 +101,8 @@ export const PdfImportView: React.FC = () => {
     // catalogue (voir updateItem/assignStoresToItems, jamais appelés ici).
     const itemsToPrint: LabelItem[] = [];
     for (const row of rows) {
-      if (!row.checked || row.quantity <= 0) continue;
-      const matchedItem = catalogItems.find((i) => i.reference === row.reference.trim());
+      if (!row.reference || !row.checked || row.quantity <= 0) continue;
+      const matchedItem = catalogItems.find((i) => i.reference === row.reference);
       if (!matchedItem) continue;
       itemsToPrint.push({ ...matchedItem, quantity: row.quantity, stores: [selectedStore.id] });
     }
@@ -129,8 +132,6 @@ export const PdfImportView: React.FC = () => {
     }
   };
 
-  const datalistId = `pdf-import-refs-${itemType}`;
-
   return (
     <div className="p-8 space-y-6">
       <div>
@@ -139,9 +140,9 @@ export const PdfImportView: React.FC = () => {
           Importer un ancien PDF
         </h1>
         <p className="text-sm text-gray-500 mt-1">
-          Charge un PDF déjà imprimé (même ancien) pour retrouver automatiquement ses références dans le
-          catalogue actuel, affecter le résultat à un magasin et régénérer le PDF — à vérifier et corriger
-          au besoin, la reconnaissance n'étant jamais garantie à 100 %.
+          Choisis d'abord le magasin, puis charge un PDF déjà imprimé (même ancien) : chaque page est croisée
+          strictement avec les références du catalogue actuel (identiques, sans approximation). Les pages sans
+          référence identique n'ont aucune association possible et ne sont pas régénérées.
         </p>
       </div>
 
@@ -170,7 +171,7 @@ export const PdfImportView: React.FC = () => {
           <label className="block">
             <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
               <Store size={14} />
-              Magasin
+              Magasin (obligatoire)
             </span>
             <select
               value={selectedStoreId}
@@ -188,7 +189,8 @@ export const PdfImportView: React.FC = () => {
 
           <button
             onClick={() => fileInputRef.current?.click()}
-            disabled={isProcessing}
+            disabled={isProcessing || !selectedStore}
+            title={selectedStore ? undefined : "Sélectionne d'abord un magasin"}
             className="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 disabled:bg-slate-300 text-white px-4 py-2 rounded-lg transition text-sm font-semibold"
           >
             {isProcessing ? <Loader2 size={16} className="animate-spin" /> : <FileUp size={16} />}
@@ -221,11 +223,12 @@ export const PdfImportView: React.FC = () => {
         <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-xs space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-base font-semibold text-gray-800">
-              {rows.length} page(s) analysée(s) — vérifie les références avant de générer
+              {rows.length} page(s) analysée(s) — {recognizedCount} associée(s) au catalogue
+              {selectedStore ? ` · magasin : ${selectedStore.name}` : ''}
             </h2>
             <button
               onClick={handleGenerate}
-              disabled={isGenerating || matchedCount === 0}
+              disabled={isGenerating || !selectedStore || matchedCount === 0}
               className="flex items-center gap-1.5 bg-orange-500 hover:bg-orange-600 disabled:bg-orange-200 text-white px-4 py-2 rounded-lg transition text-sm font-semibold"
             >
               {isGenerating ? <Loader2 size={16} className="animate-spin" /> : <Printer size={16} />}
@@ -233,20 +236,15 @@ export const PdfImportView: React.FC = () => {
             </button>
           </div>
 
-          <datalist id={datalistId}>
-            {catalogItems.map((item) => (
-              <option key={item.id} value={item.reference} />
-            ))}
-          </datalist>
-
           <div className="border border-gray-100 rounded-lg overflow-hidden divide-y divide-gray-50">
             {rows.map((row) => {
-              const isValid = catalogItems.some((i) => i.reference === row.reference.trim());
+              const recognized = Boolean(row.reference);
               return (
-                <div key={row.id} className="flex items-center gap-3 px-4 py-2">
+                <div key={row.id} className={`flex items-center gap-3 px-4 py-2 ${recognized ? '' : 'bg-gray-50'}`}>
                   <input
                     type="checkbox"
                     checked={row.checked}
+                    disabled={!recognized}
                     onChange={(e) => updateRow(row.id, { checked: e.target.checked })}
                     className="rounded text-orange-500 focus:ring-orange-400 h-3.5 w-3.5 flex-shrink-0"
                   />
@@ -256,35 +254,25 @@ export const PdfImportView: React.FC = () => {
                     className="w-10 h-14 object-cover border border-gray-200 rounded flex-shrink-0"
                   />
                   <span className="text-[11px] text-gray-400 w-10 flex-shrink-0">p.{row.pageNumber}</span>
-                  <input
-                    type="text"
-                    list={datalistId}
-                    value={row.reference}
-                    onChange={(e) => updateRow(row.id, { reference: e.target.value })}
-                    placeholder="Référence..."
-                    className={`flex-1 min-w-0 font-mono text-sm border rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-orange-500 ${
-                      isValid ? 'border-gray-200' : 'border-amber-300 bg-amber-50'
-                    }`}
-                  />
-                  {!isValid && (
-                    <span className="flex items-center gap-1 text-[11px] text-amber-600 flex-shrink-0">
+                  {recognized ? (
+                    <span className="flex-1 min-w-0 font-mono text-sm text-gray-800">{row.reference}</span>
+                  ) : (
+                    <span className="flex-1 min-w-0 flex items-center gap-1 text-xs text-amber-600">
                       <AlertTriangle size={12} />
-                      {row.matchKind === 'none' ? 'non reconnue' : 'à confirmer'}
+                      Aucune association possible avec le catalogue
                     </span>
-                  )}
-                  {isValid && row.matchKind === 'fuzzy' && (
-                    <span className="text-[11px] text-orange-500 flex-shrink-0">suggestion</span>
                   )}
                   <input
                     type="text"
                     inputMode="numeric"
                     maxLength={3}
                     value={row.quantity}
+                    disabled={!recognized}
                     onChange={(e) => {
                       const digitsOnly = e.target.value.replace(/\D/g, '').slice(0, 3);
                       updateRow(row.id, { quantity: digitsOnly === '' ? 0 : Number(digitsOnly) });
                     }}
-                    className="w-14 flex-shrink-0 text-center bg-white border border-gray-200 rounded px-1.5 py-1 text-xs font-semibold text-gray-700 focus:outline-none focus:ring-1 focus:ring-orange-500"
+                    className="w-14 flex-shrink-0 text-center bg-white border border-gray-200 rounded px-1.5 py-1 text-xs font-semibold text-gray-700 focus:outline-none focus:ring-1 focus:ring-orange-500 disabled:opacity-40"
                   />
                 </div>
               );
@@ -292,8 +280,9 @@ export const PdfImportView: React.FC = () => {
           </div>
 
           <p className="text-[11px] text-gray-400">
-            La reconnaissance se base sur une lecture optique (OCR) de chaque page : corrige les références
-            marquées avant de générer, au besoin via la liste déroulante du champ.
+            La reconnaissance se base sur une lecture optique (OCR) de chaque page. Seules les références
+            strictement identiques à celles du catalogue sont retenues ; une page non associée peut venir d'une
+            référence retirée du catalogue ou d'une lecture illisible.
           </p>
         </div>
       )}
