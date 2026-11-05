@@ -10,7 +10,13 @@ export const initOCR = async () => {
     // SINGLE_BLOCK (plutôt que le mode AUTO par défaut) donne des résultats
     // nettement plus fiables sur nos étiquettes : texte dense, peu de mise en
     // page complexe à segmenter — validé sur un vrai PDF d'archive (2020).
-    await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK });
+    // Alphabet restreint SANS la lettre O : aucune référence n'en contient (que
+    // des 0). Sans cette restriction l'OCR insère parfois un « O » parasite
+    // (« MM096 0300 » lu « MMO096 0300 ») ; avec elle il lit correctement.
+    await worker.setParameters({
+      tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK,
+      tessedit_char_whitelist: 'ABCDEFGHIJKLMNPQRSTUVWXYZ0123456789',
+    });
   }
   return worker;
 };
