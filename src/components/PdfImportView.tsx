@@ -279,6 +279,12 @@ export const PdfImportView: React.FC = () => {
                           ? `Lu : ${referenceLikeLines(row.ocrText).join(' / ')}`
                           : 'Aucune référence lisible sur la page'}
                       </span>
+                      <details className="text-[11px] text-gray-400">
+                        <summary className="cursor-pointer select-none">Voir tout le texte lu</summary>
+                        <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap rounded bg-white border border-gray-200 p-2 font-mono text-gray-600">
+                          {row.ocrText.trim() || '(aucun texte lu)'}
+                        </pre>
+                      </details>
                     </span>
                   )}
                   <input
