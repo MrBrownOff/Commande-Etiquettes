@@ -3,7 +3,7 @@ import React, { useMemo, useRef, useState } from 'react';
 import { AlertTriangle, FileUp, Loader2, Printer, Store } from 'lucide-react';
 import { LabelItem, useAppStore } from '../store/store';
 import { generatePrinterPDF, PrintableKind } from '../utils/printerExport';
-import { extractPagesWithFullPageOCR } from '../utils/pdf';
+import { buildOcrAlphabet, extractPagesWithFullPageOCR } from '../utils/pdf';
 import { matchReference } from '../utils/matchReference';
 
 const CATALOG_LABELS: Record<PrintableKind, string> = {
@@ -74,9 +74,12 @@ export const PdfImportView: React.FC = () => {
     setIsProcessing(true);
     setProgress({ current: 0, total: 0 });
     try {
-      const pages = await extractPagesWithFullPageOCR(file, (current, total) => setProgress({ current, total }));
+      const pages = await extractPagesWithFullPageOCR(file, (current, total) => setProgress({ current, total }), {
+        matcher: (text) => matchReference(text, referenceList),
+        alphabet: buildOcrAlphabet(referenceList),
+      });
       const newRows: ImportRow[] = pages.map((page) => {
-        const match = matchReference(page.ocrText, referenceList);
+        const match = page.reference;
         return {
           id: crypto.randomUUID(),
           pageNumber: page.pageNumber,
