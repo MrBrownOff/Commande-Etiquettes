@@ -17,9 +17,20 @@ interface ImportRow {
   pageNumber: number;
   thumbnailDataUrl: string;
   reference: string;
+  ocrText: string;
   checked: boolean;
   quantity: number;
 }
+
+// Lignes du texte OCR qui ressemblent à une référence (lettres puis chiffres),
+// affichées pour les pages sans association : permet de voir si la référence
+// a été lue (donc absente du catalogue) ou mal lue.
+const referenceLikeLines = (ocrText: string): string[] =>
+  ocrText
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => /[A-Z]{2}\s*\d{3}/.test(line.toUpperCase()))
+    .slice(0, 2);
 
 export const PdfImportView: React.FC = () => {
   const { stores, labels, proPack, fanions, logPrintRun, logProPackPrintRun, logFanionsPrintRun } = useAppStore();
@@ -71,6 +82,7 @@ export const PdfImportView: React.FC = () => {
           pageNumber: page.pageNumber,
           thumbnailDataUrl: page.thumbnailDataUrl,
           reference: match ?? '',
+          ocrText: page.ocrText,
           checked: Boolean(match),
           quantity: 1,
         };
@@ -257,9 +269,16 @@ export const PdfImportView: React.FC = () => {
                   {recognized ? (
                     <span className="flex-1 min-w-0 font-mono text-sm text-gray-800">{row.reference}</span>
                   ) : (
-                    <span className="flex-1 min-w-0 flex items-center gap-1 text-xs text-amber-600">
-                      <AlertTriangle size={12} />
-                      Aucune association possible avec le catalogue
+                    <span className="flex-1 min-w-0 text-xs text-amber-600">
+                      <span className="flex items-center gap-1">
+                        <AlertTriangle size={12} />
+                        Aucune association possible avec le catalogue
+                      </span>
+                      <span className="block font-mono text-[11px] text-gray-400 truncate">
+                        {referenceLikeLines(row.ocrText).length > 0
+                          ? `Lu : ${referenceLikeLines(row.ocrText).join(' / ')}`
+                          : 'Aucune référence lisible sur la page'}
+                      </span>
                     </span>
                   )}
                   <input
