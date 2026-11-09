@@ -1,11 +1,12 @@
 import React, { useMemo, useRef, useState, useEffect } from 'react';
 import { useAppStore } from '../store/store';
-import { Search, Loader2, CheckSquare, Square, Printer, LogOut, Tag, Flag, Bookmark, Store, X, ChevronDown, History } from 'lucide-react';
+import { Search, Loader2, CheckSquare, Square, Printer, LogOut, Tag, Flag, Bookmark, Store, X, ChevronDown, History, Download, Upload } from 'lucide-react';
 import { generatePrinterPDF, PrintableKind } from '../utils/printerExport';
 import { signOutUser } from './AuthGate';
 import { StoreAssignPopover } from './StoreAssignPopover';
 import { BatchStoreAssignPopover } from './BatchStoreAssignPopover';
 import { RepresentantHistory } from './RepresentantHistory';
+import { buildCsvTemplate, CsvOrderResult, decodeCsvBytes, parseCsv, resolveCsvOrder } from '../utils/csvOrder';
 
 const TYPE_TABS: { type: PrintableKind; label: string; icon: typeof Tag }[] = [
   { type: 'labels', label: 'Étiquettes', icon: Tag },
@@ -28,6 +29,8 @@ export const RepresentantView: React.FC = () => {
   const store = useAppStore();
   const [activeType, setActiveType] = useState<PrintableKind>('labels');
   const [showHistory, setShowHistory] = useState(false);
+  const csvInputRef = useRef<HTMLInputElement>(null);
+  const [csvReport, setCsvReport] = useState<{ fileName: string; result: CsvOrderResult } | { fileName: string; error: string } | null>(null);
 
   const ITEMS_BY_TYPE = { labels: store.labels, propack: store.proPack, fanions: store.fanions };
   // Les quantités du représentant sont personnelles : elles ne modifient jamais
@@ -78,6 +81,7 @@ export const RepresentantView: React.FC = () => {
 
   const switchType = (type: PrintableKind) => {
     setShowHistory(false);
+    setCsvReport(null);
     setActiveType(type);
     setSearchQuery('');
     setStoreFilter('');
@@ -145,6 +149,38 @@ export const RepresentantView: React.FC = () => {
   };
   const removeStoresFromSelection = (itemIds: string[], storeIds: string[]) => {
     itemIds.forEach((id) => setRepStores([id], (repStores[id] ?? []).filter((s) => !storeIds.includes(s))));
+  };
+
+  const handleDownloadCsvTemplate = () => {
+    const csv = buildCsvTemplate(items, stores);
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `modele_commande_${activeType === 'labels' ? 'etiquettes' : activeType}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Sélectionne les items listés dans le CSV (croisement strict avec le
+  // catalogue de l'onglet actif) et applique leurs quantités et magasins
+  // personnels, comme si le représentant les avait saisis à la main.
+  const handleCsvFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const result = resolveCsvOrder(parseCsv(decodeCsvBytes(await file.arrayBuffer())), items, stores);
+      result.matched.forEach(({ item, quantity, storeIds }) => {
+        setRepQuantity(item.id, quantity);
+        if (storeIds) setRepStores([item.id], storeIds);
+      });
+      setSelectedItemIds(result.matched.map((m) => m.item.id));
+      setSearchQuery('');
+      setStoreFilter('');
+      setCsvReport({ fileName: file.name, result });
+    } catch (err) {
+      setCsvReport({ fileName: file.name, error: err instanceof Error ? err.message : 'Fichier illisible.' });
+    }
   };
 
   const handleGenerateSelectionPDF = async () => {
@@ -312,6 +348,26 @@ export const RepresentantView: React.FC = () => {
           )}
         </div>
 
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleDownloadCsvTemplate}
+            className="flex items-center gap-1.5 text-sm font-medium text-gray-700 hover:text-orange-600 transition"
+            title="Télécharger le fichier CSV modèle"
+          >
+            <Download size={16} />
+            Modèle CSV
+          </button>
+          <button
+            onClick={() => csvInputRef.current?.click()}
+            disabled={items.length === 0}
+            className="flex items-center gap-1.5 text-sm font-medium text-gray-700 hover:text-orange-600 disabled:text-gray-300 transition"
+          >
+            <Upload size={16} />
+            Importer un CSV
+          </button>
+          <input ref={csvInputRef} type="file" accept=".csv,text/csv" onChange={handleCsvFile} className="hidden" />
+        </div>
+
         {items.length > 0 && (
           <div className="flex items-center gap-4">
             <button
@@ -345,6 +401,44 @@ export const RepresentantView: React.FC = () => {
           </div>
         )}
       </div>
+
+      {csvReport && (
+        <div className="mx-6 mt-4 bg-white border border-gray-200 rounded-xl p-4 text-sm space-y-2 flex-shrink-0 max-h-60 overflow-auto">
+          <div className="flex items-start justify-between gap-3">
+            <p className="font-semibold text-gray-800">Import de « {csvReport.fileName} »</p>
+            <button onClick={() => setCsvReport(null)} className="text-gray-400 hover:text-gray-600" title="Fermer">
+              <X size={16} />
+            </button>
+          </div>
+          {'error' in csvReport ? (
+            <p className="text-red-600">{csvReport.error}</p>
+          ) : (
+            <>
+              <p className="text-gray-700">
+                {csvReport.result.matched.length} {singular}(s) sélectionné{elisionE}(s) dans le catalogue.
+              </p>
+              {csvReport.result.notFound.length > 0 && (
+                <p className="text-red-600">
+                  Référence(s) introuvable(s) au catalogue (ignorée(s)) :{' '}
+                  {csvReport.result.notFound.map((n) => `${n.reference} (ligne ${n.line})`).join(', ')}
+                </p>
+              )}
+              {csvReport.result.invalidQuantity.length > 0 && (
+                <p className="text-red-600">
+                  Quantité invalide, entre 1 et 99 attendue (ligne ignorée) :{' '}
+                  {csvReport.result.invalidQuantity.map((n) => `${n.reference} = « ${n.value} » (ligne ${n.line})`).join(', ')}
+                </p>
+              )}
+              {csvReport.result.unknownStores.length > 0 && (
+                <p className="text-amber-700">
+                  Magasin(s) inconnu(s) (non associé(s)) :{' '}
+                  {csvReport.result.unknownStores.map((n) => `« ${n.name} » (${n.reference}, ligne ${n.line})`).join(', ')}
+                </p>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       {/* Grille des items */}
       <div className="flex-1 overflow-auto p-6">
