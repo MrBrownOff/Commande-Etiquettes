@@ -125,7 +125,7 @@ export const RepresentantView: React.FC = () => {
       .map((l) => ({ ...l, quantity: repQuantities[l.id] ?? 1 }));
     setIsGeneratingPDF(true);
     try {
-      const { missingLabels, noCropMarksLabels, summary } = await generatePrinterPDF(selectedItems, store.stores, activeType);
+      const { missingLabels, noCropMarksLabels, summary } = await generatePrinterPDF(selectedItems, store.stores, activeType, store.userName);
       await logRun(summary);
       if (missingLabels.length > 0) {
         alert(
@@ -153,6 +153,7 @@ export const RepresentantView: React.FC = () => {
           alt="Interbois"
           className="h-8 w-auto object-contain"
         />
+        {store.userName && <span className="text-sm text-slate-300 ml-auto mr-6 truncate">{store.userName}</span>}
         <button
           onClick={signOutUser}
           className="flex items-center gap-2 text-slate-300 hover:text-white text-sm font-medium transition"

@@ -1,14 +1,41 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAppStore, UserRole } from '../store/store';
 import { Users, ShieldCheck, User } from 'lucide-react';
 import { auth } from '../firebase';
+
+// Champ de saisie du nom d'un compte : enregistré à la sortie du champ ou sur
+// Entrée, uniquement si la valeur a changé.
+const NameInput: React.FC<{ uid: string; name: string; onSave: (uid: string, name: string) => Promise<void> }> = ({
+  uid,
+  name,
+  onSave,
+}) => {
+  const [value, setValue] = useState(name);
+  useEffect(() => setValue(name), [name]);
+
+  const commit = () => {
+    if (value.trim() !== name) onSave(uid, value);
+  };
+
+  return (
+    <input
+      type="text"
+      value={value}
+      placeholder="Nom (page de garde)"
+      onChange={(e) => setValue(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+      className="text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 w-44 focus:outline-none focus:ring-2 focus:ring-orange-500 transition"
+    />
+  );
+};
 
 // Panneau d'accès : liste les comptes ayant déjà ouvert l'application au moins
 // une fois (un document de rôle n'existe qu'à partir de là, voir startRoleSync
 // dans store.ts) et permet à un admin de corriger le rôle de n'importe lequel
 // d'entre eux, sans devoir recréer le compte côté Firebase Auth.
 export const AccessView: React.FC = () => {
-  const { users, updateUserRole } = useAppStore();
+  const { users, updateUserRole, updateUserName } = useAppStore();
   const currentUid = auth.currentUser?.uid;
 
   const sortedUsers = [...users].sort((a, b) => a.email.localeCompare(b.email, 'fr', { sensitivity: 'base' }));
@@ -23,7 +50,8 @@ export const AccessView: React.FC = () => {
         <p className="text-sm text-gray-500 mt-1">
           Rôle de chaque compte ayant déjà ouvert l'application (un nouveau compte apparaît ici
           après sa première connexion). Par défaut, le rôle est déduit de l'email — vous pouvez le
-          corriger ici à tout moment, sans recréer le compte.
+          corriger ici à tout moment, sans recréer le compte. Le nom saisi pour un représentant
+          apparaît sur la page de garde de ses PDF (à défaut, son email).
         </p>
       </div>
 
@@ -46,6 +74,8 @@ export const AccessView: React.FC = () => {
                   </span>
                 )}
               </div>
+
+              <NameInput uid={u.id} name={u.name ?? ''} onSave={updateUserName} />
 
               <select
                 value={u.role}

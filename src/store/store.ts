@@ -36,6 +36,9 @@ export interface AppUser {
   id: string; // uid Firebase Auth
   email: string;
   role: UserRole;
+  // Nom affiché (ex : « Jean Dupont ») : renseigné par un admin depuis le
+  // panneau « Accès », repris sur la page de garde des PDF d'un représentant.
+  name?: string;
 }
 
 // Règle d'inférence utilisée UNIQUEMENT lors de la toute première connexion d'un
@@ -121,8 +124,10 @@ interface AppState {
   // admin uniquement, la liste des comptes déjà connectés au moins une fois
   // (alimente le panneau « Accès »).
   userRole: UserRole | null;
+  userName: string | null;
   users: AppUser[];
   updateUserRole: (uid: string, role: UserRole) => Promise<void>;
+  updateUserName: (uid: string, name: string) => Promise<void>;
 
   // Actions Magasins
   addStore: (name: string, banner?: string) => Promise<void>;
@@ -351,9 +356,13 @@ export const useAppStore = create<AppState>()((set, get) => ({
     setRepQuantityTo(REP_QUANTITIES_FANIONS_COLLECTION, 'repQuantitiesFanions', itemId, quantity),
 
   userRole: null,
+  userName: null,
   users: [],
   updateUserRole: async (uid, role) => {
     await updateDoc(doc(db, USERS_COLLECTION, uid), { role });
+  },
+  updateUserName: async (uid, name) => {
+    await updateDoc(doc(db, USERS_COLLECTION, uid), { name: name.trim() });
   },
 
   addStore: async (name, banner) => {
@@ -640,8 +649,8 @@ const startRoleSync = (uid: string) => {
     (snap) => {
       if (!snap.exists()) return; // création en cours (voir ensureUserRoleDoc)
 
-      const data = snap.data() as { role: UserRole; email?: string };
-      useAppStore.setState({ userRole: data.role });
+      const data = snap.data() as { role: UserRole; email?: string; name?: string };
+      useAppStore.setState({ userRole: data.role, userName: data.name?.trim() || data.email || null });
       userRoleLoaded = true;
       markLoadedIfReady();
 
@@ -666,7 +675,7 @@ const stopRoleSync = () => {
   unsubscribeOwnUserDoc = null;
   unsubscribeUsers = null;
   userRoleLoaded = false;
-  useAppStore.setState({ userRole: null, users: [] });
+  useAppStore.setState({ userRole: null, userName: null, users: [] });
 };
 
 // La synchronisation Firestore ne démarre qu'une fois l'utilisateur authentifié
