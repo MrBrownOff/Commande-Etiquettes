@@ -1,8 +1,11 @@
 import React, { useMemo, useRef, useState, useEffect } from 'react';
 import { useAppStore } from '../store/store';
-import { Search, Loader2, CheckSquare, Square, Printer, LogOut, Tag, Flag, Bookmark, Store, X, ChevronDown } from 'lucide-react';
+import { Search, Loader2, CheckSquare, Square, Printer, LogOut, Tag, Flag, Bookmark, Store, X, ChevronDown, History } from 'lucide-react';
 import { generatePrinterPDF, PrintableKind } from '../utils/printerExport';
 import { signOutUser } from './AuthGate';
+import { StoreAssignPopover } from './StoreAssignPopover';
+import { BatchStoreAssignPopover } from './BatchStoreAssignPopover';
+import { RepresentantHistory } from './RepresentantHistory';
 
 const TYPE_TABS: { type: PrintableKind; label: string; icon: typeof Tag }[] = [
   { type: 'labels', label: 'Étiquettes', icon: Tag },
@@ -24,6 +27,7 @@ const TYPE_META: Record<PrintableKind, { imgFolder: string; singular: string; el
 export const RepresentantView: React.FC = () => {
   const store = useAppStore();
   const [activeType, setActiveType] = useState<PrintableKind>('labels');
+  const [showHistory, setShowHistory] = useState(false);
 
   const ITEMS_BY_TYPE = { labels: store.labels, propack: store.proPack, fanions: store.fanions };
   // Les quantités du représentant sont personnelles : elles ne modifient jamais
@@ -40,12 +44,27 @@ export const RepresentantView: React.FC = () => {
     propack: store.setRepQuantityProPack,
     fanions: store.setRepQuantityFanions,
   };
+  // Magasins associés par ce représentant à chaque item : personnels comme les
+  // quantités, ce sont eux (et non item.stores du catalogue) qui figurent sur la
+  // page de garde du PDF généré.
+  const REP_STORES_BY_TYPE = {
+    labels: store.repStoresLabels,
+    propack: store.repStoresProPack,
+    fanions: store.repStoresFanions,
+  };
+  const SET_REP_STORES_BY_TYPE = {
+    labels: store.setRepStoresLabels,
+    propack: store.setRepStoresProPack,
+    fanions: store.setRepStoresFanions,
+  };
   const LOG_RUN_BY_TYPE = { labels: store.logPrintRun, propack: store.logProPackPrintRun, fanions: store.logFanionsPrintRun };
 
   const { stores } = store;
   const items = ITEMS_BY_TYPE[activeType];
   const repQuantities = REP_QTY_BY_TYPE[activeType];
   const setRepQuantity = SET_REP_QTY_BY_TYPE[activeType];
+  const repStores = REP_STORES_BY_TYPE[activeType];
+  const setRepStores = SET_REP_STORES_BY_TYPE[activeType];
   const logRun = LOG_RUN_BY_TYPE[activeType];
   const { imgFolder, singular, elisionE } = TYPE_META[activeType];
 
@@ -58,6 +77,7 @@ export const RepresentantView: React.FC = () => {
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
 
   const switchType = (type: PrintableKind) => {
+    setShowHistory(false);
     setActiveType(type);
     setSearchQuery('');
     setStoreFilter('');
@@ -116,13 +136,24 @@ export const RepresentantView: React.FC = () => {
     );
   };
 
+  // Ajoute (ou retire) des magasins à chaque item sélectionné, en conservant ceux
+  // déjà associés à chacun.
+  const assignStoresToSelection = (itemIds: string[], storeIds: string[]) => {
+    itemIds.forEach((id) =>
+      setRepStores([id], Array.from(new Set([...(repStores[id] ?? []), ...storeIds])))
+    );
+  };
+  const removeStoresFromSelection = (itemIds: string[], storeIds: string[]) => {
+    itemIds.forEach((id) => setRepStores([id], (repStores[id] ?? []).filter((s) => !storeIds.includes(s))));
+  };
+
   const handleGenerateSelectionPDF = async () => {
     // On substitue la quantité personnelle du représentant à celle de l'item
     // partagé, sans jamais l'écrire dans le catalogue commun (voir updateItem
     // plus haut, qui n'existe plus ici : seule la quantité personnelle change).
     const selectedItems = items
       .filter((l) => selectedItemIds.includes(l.id))
-      .map((l) => ({ ...l, quantity: repQuantities[l.id] ?? 1 }));
+      .map((l) => ({ ...l, quantity: repQuantities[l.id] ?? 1, stores: repStores[l.id] ?? [] }));
     setIsGeneratingPDF(true);
     try {
       const { missingLabels, noCropMarksLabels, summary } = await generatePrinterPDF(selectedItems, store.stores, activeType, store.userName);
@@ -170,7 +201,7 @@ export const RepresentantView: React.FC = () => {
             key={type}
             onClick={() => switchType(type)}
             className={`flex items-center gap-2 px-4 py-2 rounded-t-lg text-sm font-medium transition border-b-2 ${
-              activeType === type
+              !showHistory && activeType === type
                 ? 'border-orange-500 text-orange-600 bg-orange-50/50'
                 : 'border-transparent text-gray-500 hover:text-gray-700'
             }`}
@@ -179,7 +210,23 @@ export const RepresentantView: React.FC = () => {
             {label}
           </button>
         ))}
+        <button
+          onClick={() => setShowHistory(true)}
+          className={`flex items-center gap-2 px-4 py-2 rounded-t-lg text-sm font-medium transition border-b-2 ml-auto ${
+            showHistory
+              ? 'border-orange-500 text-orange-600 bg-orange-50/50'
+              : 'border-transparent text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          <History size={16} />
+          Historique
+        </button>
       </div>
+
+      {showHistory ? (
+        <RepresentantHistory />
+      ) : (
+        <>
 
       {/* Barre de recherche + filtre magasin + actions */}
       <div className="bg-white border-b flex items-center justify-between px-6 py-3 shadow-xs flex-shrink-0 gap-4 flex-wrap">
@@ -279,6 +326,14 @@ export const RepresentantView: React.FC = () => {
               Tout sélectionner ({selectedItemIds.length}/{filteredItems.length})
             </button>
 
+            {selectedItemIds.length > 0 && (
+              <BatchStoreAssignPopover
+                selectedLabelIds={selectedItemIds}
+                onAssign={assignStoresToSelection}
+                onRemove={removeStoresFromSelection}
+              />
+            )}
+
             <button
               onClick={handleGenerateSelectionPDF}
               disabled={selectedItemIds.length === 0 || isGeneratingPDF}
@@ -313,9 +368,9 @@ export const RepresentantView: React.FC = () => {
               return (
                 <div
                   key={item.id}
-                  className={`bg-white rounded-xl border transition shadow-xs flex flex-col overflow-hidden ${isSelected ? 'border-orange-500 ring-2 ring-orange-500/20' : 'border-gray-200 hover:border-gray-300'}`}
+                  className={`bg-white rounded-xl border transition shadow-xs flex flex-col ${isSelected ? 'border-orange-500 ring-2 ring-orange-500/20' : 'border-gray-200 hover:border-gray-300'}`}
                 >
-                  <div className="relative bg-slate-100 p-2 flex items-center justify-center border-b border-gray-100 h-48">
+                  <div className="relative bg-slate-100 p-2 flex items-center justify-center border-b border-gray-100 h-48 rounded-t-xl">
                     <button
                       onClick={() => toggleSelectItem(item.id)}
                       className={`absolute top-2.5 left-2.5 z-10 p-1 rounded-md bg-white shadow-md border transition-all ${isSelected
@@ -369,12 +424,29 @@ export const RepresentantView: React.FC = () => {
                       />
                     </div>
                   </div>
+
+                  <div className="px-4 pb-4 space-y-2">
+                    <StoreAssignPopover
+                      assignedStoreIds={repStores[item.id] ?? []}
+                      onChangeStores={(ids) => setRepStores([item.id], ids)}
+                    />
+                    {(repStores[item.id] ?? []).length > 0 && (
+                      <p className="text-[11px] text-gray-500 leading-snug">
+                        {(repStores[item.id] ?? [])
+                          .map((id) => stores.find((s) => s.id === id)?.name)
+                          .filter(Boolean)
+                          .join(', ')}
+                      </p>
+                    )}
+                  </div>
                 </div>
               );
             })}
           </div>
         )}
       </div>
+        </>
+      )}
     </div>
   );
 };

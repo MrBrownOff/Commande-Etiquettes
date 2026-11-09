@@ -7,6 +7,14 @@ const PAGE_WIDTH = 595.28; // A4 en points (210mm)
 const PAGE_HEIGHT = 841.89; // A4 en points (297mm)
 const MARGIN_MM = 15;
 
+// Version du nom utilisable dans un nom de fichier : sans accents ni caractères spéciaux.
+const slugify = (text: string): string =>
+  text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
 export type PrintableKind = 'labels' | 'propack' | 'fanions';
 
 // Chaque catégorie a son propre dossier d'assets et son propre format d'impression
@@ -310,7 +318,8 @@ export const generatePrinterPDF = async (
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `commande_impression_${config.fileSlug}_${new Date().toISOString().slice(0, 10)}.pdf`;
+  const repSlug = requestedBy ? slugify(requestedBy) : '';
+  a.download = `commande_impression_${config.fileSlug}${repSlug ? `_${repSlug}` : ''}_${new Date().toISOString().slice(0, 10)}.pdf`;
   a.click();
   URL.revokeObjectURL(url);
 
