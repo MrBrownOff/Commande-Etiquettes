@@ -148,7 +148,14 @@ const embedItem = async (
 
 // Génère un PDF prêt pour l'imprimeur : une page de garde récapitulative,
 // suivie d'une page par exemplaire commandé de chaque item (étiquette ou Pro-Pack).
-export const generatePrinterPDF = async (items: LabelItem[], stores: StoreItem[], kind: PrintableKind = 'labels') => {
+// `requestedBy` : nom du représentant à l'origine de la commande, repris sur la
+// page de garde (absent pour l'équipe interne).
+export const generatePrinterPDF = async (
+  items: LabelItem[],
+  stores: StoreItem[],
+  kind: PrintableKind = 'labels',
+  requestedBy?: string | null
+) => {
   const config = KIND_CONFIG[kind];
 
   const orderedItems = items.filter((l) => (l.quantity ?? 0) > 0);
@@ -195,9 +202,12 @@ export const generatePrinterPDF = async (items: LabelItem[], stores: StoreItem[]
     MARGIN_MM + 15,
     11
   );
-  drawText(coverPage, 'Magasin(s) concerné(s) :', MARGIN_MM, MARGIN_MM + 28, 13, fontBold);
+  if (requestedBy) {
+    drawText(coverPage, `Représentant : ${requestedBy}`, MARGIN_MM, MARGIN_MM + 22, 12, fontBold);
+  }
+  drawText(coverPage, 'Magasin(s) concerné(s) :', MARGIN_MM, MARGIN_MM + 30, 13, fontBold);
 
-  const contentTop = MARGIN_MM + 36;
+  const contentTop = MARGIN_MM + 38;
   const contentBottom = PAGE_HEIGHT / PT_PER_MM - MARGIN_MM;
   const availableHeight = contentBottom - contentTop;
 
