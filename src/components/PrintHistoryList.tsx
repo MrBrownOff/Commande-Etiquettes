@@ -78,6 +78,11 @@ export const PrintHistoryList: React.FC<PrintHistoryListProps> = ({ entries, nou
                       <ChevronRight size={14} className="text-gray-400" />
                     )}
                     <span className="text-sm font-medium text-gray-800">{formatDate(entry)}</span>
+                    {entry.repName && (
+                      <span className="text-[10px] font-semibold text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
+                        {entry.repName}
+                      </span>
+                    )}
                   </div>
                   <span className="text-xs text-gray-500">
                     {entry.totalReferences} référence(s), {entry.totalQuantity} {noun}(s)

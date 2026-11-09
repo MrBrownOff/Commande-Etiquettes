@@ -75,6 +75,10 @@ export interface PrintHistoryEntry {
   totalQuantity: number;
   storeNames: string[];
   items: { reference: string; quantity: number; storeNames: string[] }[];
+  // Compte à l'origine de l'impression (renseigné pour les représentants : permet
+  // à chacun de retrouver son propre historique). Absent des anciennes entrées.
+  uid?: string;
+  repName?: string;
 }
 
 type PrintRunEntry = {
@@ -119,6 +123,14 @@ interface AppState {
   setRepQuantityLabels: (itemId: string, quantity: number) => void;
   setRepQuantityProPack: (itemId: string, quantity: number) => void;
   setRepQuantityFanions: (itemId: string, quantity: number) => void;
+  // Magasins associés par ce représentant à chaque item (personnels, eux aussi :
+  // n'affectent jamais item.stores du catalogue partagé).
+  repStoresLabels: Record<string, string[]>;
+  repStoresProPack: Record<string, string[]>;
+  repStoresFanions: Record<string, string[]>;
+  setRepStoresLabels: (itemIds: string[], storeIds: string[]) => void;
+  setRepStoresProPack: (itemIds: string[], storeIds: string[]) => void;
+  setRepStoresFanions: (itemIds: string[], storeIds: string[]) => void;
 
   // Rôle du compte connecté (voir inferRoleFromEmail ci-dessus) et, pour un
   // admin uniquement, la liste des comptes déjà connectés au moins une fois
@@ -266,8 +278,12 @@ const clearItemsFrom = async (collectionName: string, currentItems: LabelItem[])
 };
 
 const logRunTo = async (historyCollectionName: string, entry: PrintRunEntry) => {
+  const uid = auth.currentUser?.uid;
+  const { userRole, userName } = useAppStore.getState();
   await addDoc(collection(db, historyCollectionName), {
     ...entry,
+    ...(uid ? { uid } : {}),
+    ...(userRole === 'representant' && userName ? { repName: userName } : {}),
     createdAt: serverTimestamp(),
   });
 };
@@ -335,6 +351,27 @@ const setRepQuantityTo = (
   );
 };
 
+// Écrit les magasins associés par un représentant à un ou plusieurs items. Même
+// document que la quantité personnelle (`${uid}_${itemId}`), fusionné : les
+// règles Firestore existantes (uid == auth.uid) couvrent donc déjà cette écriture.
+type RepStoresStateKey = 'repStoresLabels' | 'repStoresProPack' | 'repStoresFanions';
+const setRepStoresTo = (collectionName: string, stateKey: RepStoresStateKey, itemIds: string[], storeIds: string[]) => {
+  const uid = auth.currentUser?.uid;
+  if (!uid || itemIds.length === 0) return;
+
+  useAppStore.setState((state) => {
+    const next = { ...state[stateKey] };
+    itemIds.forEach((id) => {
+      next[id] = storeIds;
+    });
+    return { [stateKey]: next };
+  });
+
+  itemIds.forEach((itemId) => {
+    setDoc(doc(db, collectionName, `${uid}_${itemId}`), { uid, itemId, stores: storeIds }, { merge: true }).catch(() => {});
+  });
+};
+
 export const useAppStore = create<AppState>()((set, get) => ({
   labels: [],
   proPack: [],
@@ -354,6 +391,16 @@ export const useAppStore = create<AppState>()((set, get) => ({
     setRepQuantityTo(REP_QUANTITIES_PROPACK_COLLECTION, 'repQuantitiesProPack', itemId, quantity),
   setRepQuantityFanions: (itemId, quantity) =>
     setRepQuantityTo(REP_QUANTITIES_FANIONS_COLLECTION, 'repQuantitiesFanions', itemId, quantity),
+
+  repStoresLabels: {},
+  repStoresProPack: {},
+  repStoresFanions: {},
+  setRepStoresLabels: (itemIds, storeIds) =>
+    setRepStoresTo(REP_QUANTITIES_LABELS_COLLECTION, 'repStoresLabels', itemIds, storeIds),
+  setRepStoresProPack: (itemIds, storeIds) =>
+    setRepStoresTo(REP_QUANTITIES_PROPACK_COLLECTION, 'repStoresProPack', itemIds, storeIds),
+  setRepStoresFanions: (itemIds, storeIds) =>
+    setRepStoresTo(REP_QUANTITIES_FANIONS_COLLECTION, 'repStoresFanions', itemIds, storeIds),
 
   userRole: null,
   userName: null,
@@ -794,11 +841,13 @@ const startFirestoreSync = (uid: string) => {
     query(collection(db, REP_QUANTITIES_LABELS_COLLECTION), where('uid', '==', uid)),
     (snapshot) => {
       const repQuantitiesLabels: Record<string, number> = {};
+      const repStoresLabels: Record<string, string[]> = {};
       snapshot.docs.forEach((d) => {
-        const data = d.data() as { itemId: string; quantity: number };
-        repQuantitiesLabels[data.itemId] = data.quantity;
+        const data = d.data() as { itemId: string; quantity?: number; stores?: string[] };
+        if (data.quantity !== undefined) repQuantitiesLabels[data.itemId] = data.quantity;
+        if (data.stores) repStoresLabels[data.itemId] = data.stores;
       });
-      useAppStore.setState({ repQuantitiesLabels });
+      useAppStore.setState({ repQuantitiesLabels, repStoresLabels });
     },
     (error) => console.error('Erreur de synchronisation des quantités personnelles (Étiquettes) :', error)
   );
@@ -807,11 +856,13 @@ const startFirestoreSync = (uid: string) => {
     query(collection(db, REP_QUANTITIES_PROPACK_COLLECTION), where('uid', '==', uid)),
     (snapshot) => {
       const repQuantitiesProPack: Record<string, number> = {};
+      const repStoresProPack: Record<string, string[]> = {};
       snapshot.docs.forEach((d) => {
-        const data = d.data() as { itemId: string; quantity: number };
-        repQuantitiesProPack[data.itemId] = data.quantity;
+        const data = d.data() as { itemId: string; quantity?: number; stores?: string[] };
+        if (data.quantity !== undefined) repQuantitiesProPack[data.itemId] = data.quantity;
+        if (data.stores) repStoresProPack[data.itemId] = data.stores;
       });
-      useAppStore.setState({ repQuantitiesProPack });
+      useAppStore.setState({ repQuantitiesProPack, repStoresProPack });
     },
     (error) => console.error('Erreur de synchronisation des quantités personnelles (Pro-Pack) :', error)
   );
@@ -820,11 +871,13 @@ const startFirestoreSync = (uid: string) => {
     query(collection(db, REP_QUANTITIES_FANIONS_COLLECTION), where('uid', '==', uid)),
     (snapshot) => {
       const repQuantitiesFanions: Record<string, number> = {};
+      const repStoresFanions: Record<string, string[]> = {};
       snapshot.docs.forEach((d) => {
-        const data = d.data() as { itemId: string; quantity: number };
-        repQuantitiesFanions[data.itemId] = data.quantity;
+        const data = d.data() as { itemId: string; quantity?: number; stores?: string[] };
+        if (data.quantity !== undefined) repQuantitiesFanions[data.itemId] = data.quantity;
+        if (data.stores) repStoresFanions[data.itemId] = data.stores;
       });
-      useAppStore.setState({ repQuantitiesFanions });
+      useAppStore.setState({ repQuantitiesFanions, repStoresFanions });
     },
     (error) => console.error('Erreur de synchronisation des quantités personnelles (Fanions) :', error)
   );
@@ -863,6 +916,9 @@ const stopFirestoreSync = () => {
     repQuantitiesLabels: {},
     repQuantitiesProPack: {},
     repQuantitiesFanions: {},
+    repStoresLabels: {},
+    repStoresProPack: {},
+    repStoresFanions: {},
     isLoading: true,
   });
 };
