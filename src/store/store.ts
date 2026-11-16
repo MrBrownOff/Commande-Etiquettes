@@ -1,92 +1,23 @@
 // src/store/store.ts
 import { create } from 'zustand';
-import { onAuthStateChanged } from 'firebase/auth';
 import {
-  collection,
-  doc,
-  addDoc,
-  deleteDoc,
-  updateDoc,
-  setDoc,
-  getDoc,
-  onSnapshot,
-  getDocs,
-  writeBatch,
-  arrayUnion,
-  arrayRemove,
-  query,
-  where,
-  orderBy,
-  limit,
-  serverTimestamp,
-  Timestamp,
-  WriteBatch,
-} from 'firebase/firestore';
-import { auth, db } from '../firebase';
+  dataService,
+  CATALOG_KINDS,
+  CatalogKind,
+  AppUser,
+  LabelItem,
+  PrintHistoryEntry,
+  PrintRunEntry,
+  StoreItem,
+  UserRole,
+  RepSelections,
+  inferRoleFromEmail,
+} from '../data';
 
-export interface StoreItem {
-  id: string;
-  name: string;
-  banner?: string;
-}
-
-export type UserRole = 'admin' | 'representant';
-
-export interface AppUser {
-  id: string; // uid Firebase Auth
-  email: string;
-  role: UserRole;
-  // Nom affiché (ex : « Jean Dupont ») : renseigné par un admin depuis le
-  // panneau « Accès », repris sur la page de garde des PDF d'un représentant.
-  name?: string;
-}
-
-// Règle d'inférence utilisée UNIQUEMENT lors de la toute première connexion d'un
-// compte, pour créer automatiquement son document de rôle sans intervention
-// manuelle : reprend la même convention que l'ancien routage par email. Les
-// règles Firestore recalculent indépendamment ce même résultat côté serveur
-// (voir firestore.rules) — un compte ne peut donc jamais s'auto-attribuer un
-// rôle différent de celui-ci. Un admin peut ensuite corriger le rôle à tout
-// moment depuis le panneau « Accès ».
-export const inferRoleFromEmail = (email?: string | null): UserRole =>
-  (email ?? '').toLowerCase().includes('representant') ? 'representant' : 'admin';
-
-// Représente un item imprimable (étiquette ou Pro-Pack) : même structure pour les deux
-// catégories, qui vivent chacune dans leur propre collection Firestore indépendante.
-export interface LabelItem {
-  id: string;
-  reference: string;
-  filename: string;
-  imageUrl?: string;
-  thumbnailUrl?: string;
-  name: string;
-  banner: string; // ex: "Canac", "BMR", "Rona", "Patrick Morin", "Indépendant"
-  stores: string[]; // Liste des IDs de magasins assignés
-  quantity?: number; // Quantité commandée (0-99)
-  category?: string; // Sous-catégorie optionnelle (ex: "Produits en peuplier"), pour les sous-menus de LabelsView
-}
-
-// Trace historisée d'un PDF généré pour l'imprimeur : on ne conserve pas le fichier
-// lui-même (ça demanderait Firebase Storage), seulement les informations qu'il contenait.
-export interface PrintHistoryEntry {
-  id: string;
-  createdAt: Timestamp | null;
-  totalReferences: number;
-  totalQuantity: number;
-  storeNames: string[];
-  items: { reference: string; quantity: number; storeNames: string[] }[];
-  // Compte à l'origine de l'impression (renseigné pour les représentants : permet
-  // à chacun de retrouver son propre historique). Absent des anciennes entrées.
-  uid?: string;
-  repName?: string;
-}
-
-type PrintRunEntry = {
-  totalReferences: number;
-  totalQuantity: number;
-  storeNames: string[];
-  items: { reference: string; quantity: number; storeNames: string[] }[];
-};
+// Les types métier vivent dans src/data/types.ts (indépendants du back-end) ;
+// ils restent importables depuis le store pour ne pas toucher aux composants.
+export type { AppUser, LabelItem, PrintHistoryEntry, StoreItem, UserRole };
+export { inferRoleFromEmail };
 
 // Détection automatique de la bannière à partir du nom du magasin
 export const detectBannerFromName = (name: string, explicitBanner?: string): string => {
@@ -184,195 +115,151 @@ interface AppState {
   importProject: (jsonData: { labels: LabelItem[]; proPack?: LabelItem[]; fanions?: LabelItem[]; stores: StoreItem[] }) => Promise<void>;
 }
 
-const STORES_COLLECTION = 'stores';
-const LABELS_COLLECTION = 'labels';
-const PROPACK_COLLECTION = 'proPack';
-// Catalogue "Fanions" indépendant, distinct des anciennes collections "fanions" /
-// "fanionPrintHistory" (celles-ci désignaient l'ancien nom du Pro-Pack avant son
-// renommage — voir LEGACY_FANIONS_COLLECTION ci-dessous — et ne doivent surtout
-// pas être réutilisées ici pour éviter de mélanger les deux catalogues).
-const FANIONS_COLLECTION = 'fanionsItems';
-const PRINT_HISTORY_COLLECTION = 'printHistory';
-const PROPACK_PRINT_HISTORY_COLLECTION = 'proPackPrintHistory';
-const FANIONS_PRINT_HISTORY_COLLECTION = 'fanionsItemsPrintHistory';
+
 const PRINT_HISTORY_LIMIT = 200;
-
-// Quantités personnelles des représentants, une collection par catégorie : chaque
-// document est identifié par `${uid}_${itemId}` et ne contient que la quantité de
-// CE représentant pour CET item — jamais lue ni écrite par un autre représentant
-// ni par l'équipe interne, ce qui rend chaque commande de représentant totalement
-// indépendante du catalogue partagé (item.quantity) et des autres représentants.
-const REP_QUANTITIES_LABELS_COLLECTION = 'repQuantitiesLabels';
-const REP_QUANTITIES_PROPACK_COLLECTION = 'repQuantitiesProPack';
-const REP_QUANTITIES_FANIONS_COLLECTION = 'repQuantitiesFanions';
-
-// Un document par compte (id = uid), créé automatiquement à la première
-// connexion (voir startRoleSync) : porte le rôle qui détermine à la fois la
-// vue affichée et, côté serveur, ce que le compte a le droit d'écrire.
-const USERS_COLLECTION = 'users';
-
-// Anciens noms de collection utilisés avant le renommage "Fanions" -> "Pro-Pack" :
-// on y migre automatiquement une seule fois (voir startFirestoreSync) pour ne pas
-// perdre les items déjà saisis, sans jamais supprimer les anciennes données.
-const LEGACY_FANIONS_COLLECTION = 'fanions';
-const LEGACY_FANION_PRINT_HISTORY_COLLECTION = 'fanionPrintHistory';
-
-const DEFAULT_STORES: Omit<StoreItem, 'id'>[] = [
-  { name: 'Canac Lévis', banner: 'Canac' },
-  { name: 'Rona', banner: 'Rona' },
-  { name: 'Home Depot', banner: 'Home Depot' },
-];
-
-// Firestore limite un batch à 500 opérations ; on découpe par prudence.
-const BATCH_LIMIT = 400;
-
-const commitInChunks = async <T>(items: T[], applyOp: (batch: WriteBatch, item: T) => void) => {
-  for (let i = 0; i < items.length; i += BATCH_LIMIT) {
-    const chunk = items.slice(i, i + BATCH_LIMIT);
-    const batch = writeBatch(db);
-    chunk.forEach((item) => applyOp(batch, item));
-    await batch.commit();
-  }
-};
-
-// --- Helpers génériques, paramétrés par le nom de collection Firestore, partagés
-// entre les étiquettes et le Pro-Pack : chaque catégorie appelle ces mêmes fonctions
-// avec sa propre collection, ce qui les rend indépendantes l'une de l'autre côté données.
-
-const addItemsBatchTo = async (collectionName: string, newItems: LabelItem[]) => {
-  await commitInChunks(newItems, (batch, item) => {
-    const { id, ...rest } = item;
-    batch.set(doc(db, collectionName, id), rest);
-  });
-};
-
-const deleteItemFrom = async (
-  collectionName: string,
-  pendingWrites: Map<string, ReturnType<typeof setTimeout>>,
-  id: string
-) => {
-  const pending = pendingWrites.get(id);
-  if (pending) {
-    clearTimeout(pending);
-    pendingWrites.delete(id);
-  }
-  await deleteDoc(doc(db, collectionName, id));
-};
-
-const assignStoresTo = async (collectionName: string, itemIds: string[], storeIds: string[]) => {
-  await commitInChunks(itemIds, (batch, id) => {
-    batch.update(doc(db, collectionName, id), { stores: arrayUnion(...storeIds) });
-  });
-};
-
-const removeStoresFrom = async (collectionName: string, itemIds: string[], storeIds: string[]) => {
-  await commitInChunks(itemIds, (batch, id) => {
-    batch.update(doc(db, collectionName, id), { stores: arrayRemove(...storeIds) });
-  });
-};
-
-const clearItemsFrom = async (collectionName: string, currentItems: LabelItem[]) => {
-  await commitInChunks(currentItems, (batch, item) => {
-    batch.delete(doc(db, collectionName, item.id));
-  });
-};
-
-const logRunTo = async (historyCollectionName: string, entry: PrintRunEntry) => {
-  const uid = auth.currentUser?.uid;
-  const { userRole, userName } = useAppStore.getState();
-  await addDoc(collection(db, historyCollectionName), {
-    ...entry,
-    ...(uid ? { uid } : {}),
-    ...(userRole === 'representant' && userName ? { repName: userName } : {}),
-    createdAt: serverTimestamp(),
-  });
-};
-
-// Relit la collection entière plutôt que le state local, plafonné aux
-// PRINT_HISTORY_LIMIT derniers lots : sinon les lots plus anciens survivraient.
-// Ne touche jamais aux catalogues ni aux assignations magasin/étiquette.
-const clearHistoryCollection = async (historyCollectionName: string) => {
-  const snapshot = await getDocs(collection(db, historyCollectionName));
-  await commitInChunks(snapshot.docs, (batch, d) => {
-    batch.delete(d.ref);
-  });
-};
-
-// Copie tous les documents d'une ancienne collection vers la nouvelle, sans jamais
-// supprimer l'ancienne (migration additive uniquement, sans risque de perte).
-const migrateLegacyCollection = async (fromCollection: string, toCollection: string) => {
-  const legacySnapshot = await getDocs(collection(db, fromCollection));
-  if (legacySnapshot.empty) return false;
-  const batch = writeBatch(db);
-  legacySnapshot.docs.forEach((d) => {
-    batch.set(doc(db, toCollection, d.id), d.data());
-  });
-  await batch.commit();
-  return true;
-};
-
-// Débounce des écritures Firestore par item (évite une requête réseau par frappe
-// clavier sur les champs référence/quantité) tout en gardant l'UI réactive localement.
-// Une Map indépendante par catégorie : une frappe sur un item Pro-Pack ne retarde pas
-// l'écriture en cours sur une étiquette, et vice-versa.
-const pendingLabelWrites = new Map<string, ReturnType<typeof setTimeout>>();
-const pendingProPackWrites = new Map<string, ReturnType<typeof setTimeout>>();
-const pendingFanionsWrites = new Map<string, ReturnType<typeof setTimeout>>();
-const pendingRepQuantityWrites = new Map<string, ReturnType<typeof setTimeout>>();
 const LABEL_WRITE_DEBOUNCE_MS = 500;
 
-// Écrit la quantité personnelle d'un représentant pour un item donné, dans la
-// collection dédiée à la catégorie. Le document (identifié par `${uid}_${itemId}`)
-// peut ne pas encore exister (setDoc + merge au lieu de updateDoc), et le filtrage
-// par uid côté lecture (voir startFirestoreSync) garantit qu'aucun autre
-// utilisateur ne voit ou n'écrase cette valeur.
-const setRepQuantityTo = (
-  collectionName: string,
-  stateKey: 'repQuantitiesLabels' | 'repQuantitiesProPack' | 'repQuantitiesFanions',
-  itemId: string,
-  quantity: number
-) => {
-  const uid = auth.currentUser?.uid;
-  if (!uid) return;
+// Tout accès aux données passe par `dataService` (src/data) : le store ne garde que
+// l'état, les mises à jour optimistes et le débounce des écritures par frappe.
 
+type StateKeys = {
+  items: 'labels' | 'proPack' | 'fanions';
+  history: 'printHistory' | 'proPackPrintHistory' | 'fanionsPrintHistory';
+  repQuantities: 'repQuantitiesLabels' | 'repQuantitiesProPack' | 'repQuantitiesFanions';
+  repStores: 'repStoresLabels' | 'repStoresProPack' | 'repStoresFanions';
+};
+
+const KEYS: Record<CatalogKind, StateKeys> = {
+  labels: {
+    items: 'labels',
+    history: 'printHistory',
+    repQuantities: 'repQuantitiesLabels',
+    repStores: 'repStoresLabels',
+  },
+  propack: {
+    items: 'proPack',
+    history: 'proPackPrintHistory',
+    repQuantities: 'repQuantitiesProPack',
+    repStores: 'repStoresProPack',
+  },
+  fanions: {
+    items: 'fanions',
+    history: 'fanionsPrintHistory',
+    repQuantities: 'repQuantitiesFanions',
+    repStores: 'repStoresFanions',
+  },
+};
+
+// Débounce des écritures par item (évite une requête réseau par frappe clavier sur
+// les champs référence/quantité) tout en gardant l'UI réactive localement. Une Map
+// indépendante par catalogue : une frappe sur un Pro-Pack ne retarde pas l'écriture
+// en cours sur une étiquette, et vice-versa.
+const pendingItemWrites: Record<CatalogKind, Map<string, ReturnType<typeof setTimeout>>> = {
+  labels: new Map(),
+  propack: new Map(),
+  fanions: new Map(),
+};
+const pendingRepQuantityWrites = new Map<string, ReturnType<typeof setTimeout>>();
+
+const updateItemIn = (kind: CatalogKind, id: string, updatedFields: Partial<LabelItem>) => {
+  const key = KEYS[kind].items;
+  // Mise à jour optimiste immédiate pour garder la saisie fluide...
   useAppStore.setState((state) => ({
-    [stateKey]: { ...state[stateKey], [itemId]: quantity },
+    [key]: state[key].map((i) => (i.id === id ? { ...i, ...updatedFields } : i)),
   }));
 
-  const debounceKey = `${collectionName}:${itemId}`;
+  // ...écriture différée pour éviter une requête réseau par frappe.
+  const pending = pendingItemWrites[kind];
+  const existingTimeout = pending.get(id);
+  if (existingTimeout) clearTimeout(existingTimeout);
+  pending.set(
+    id,
+    setTimeout(() => {
+      pending.delete(id);
+      dataService.updateItem(kind, id, updatedFields).catch(() => {
+        // L'item a probablement été supprimé entre-temps : rien à faire.
+      });
+    }, LABEL_WRITE_DEBOUNCE_MS)
+  );
+};
+
+const deleteItemIn = async (kind: CatalogKind, id: string) => {
+  const pending = pendingItemWrites[kind];
+  const timeout = pending.get(id);
+  if (timeout) {
+    clearTimeout(timeout);
+    pending.delete(id);
+  }
+  await dataService.deleteItem(kind, id);
+};
+
+const logRunIn = async (kind: CatalogKind, entry: PrintRunEntry) => {
+  const uid = dataService.getCurrentUserId();
+  const { userRole, userName } = useAppStore.getState();
+  await dataService.logPrintRun(kind, entry, {
+    ...(uid ? { uid } : {}),
+    ...(userRole === 'representant' && userName ? { repName: userName } : {}),
+  });
+};
+
+// Écrit la quantité personnelle d'un représentant pour un item donné : état local
+// immédiat, écriture différée. Le filtrage par uid côté lecture garantit
+// qu'aucun autre utilisateur ne voit ou n'écrase cette valeur.
+const setRepQuantityIn = (kind: CatalogKind, itemId: string, quantity: number) => {
+  const uid = dataService.getCurrentUserId();
+  if (!uid) return;
+  const key = KEYS[kind].repQuantities;
+
+  useAppStore.setState((state) => ({
+    [key]: { ...state[key], [itemId]: quantity },
+  }));
+
+  const debounceKey = `${kind}:${itemId}`;
   const existingTimeout = pendingRepQuantityWrites.get(debounceKey);
   if (existingTimeout) clearTimeout(existingTimeout);
   pendingRepQuantityWrites.set(
     debounceKey,
     setTimeout(() => {
       pendingRepQuantityWrites.delete(debounceKey);
-      setDoc(doc(db, collectionName, `${uid}_${itemId}`), { uid, itemId, quantity }, { merge: true }).catch(() => {});
+      dataService.saveRepQuantity(kind, uid, itemId, quantity).catch(() => {});
     }, LABEL_WRITE_DEBOUNCE_MS)
   );
 };
 
-// Écrit les magasins associés par un représentant à un ou plusieurs items. Même
-// document que la quantité personnelle (`${uid}_${itemId}`), fusionné : les
-// règles Firestore existantes (uid == auth.uid) couvrent donc déjà cette écriture.
-type RepStoresStateKey = 'repStoresLabels' | 'repStoresProPack' | 'repStoresFanions';
-const setRepStoresTo = (collectionName: string, stateKey: RepStoresStateKey, itemIds: string[], storeIds: string[]) => {
-  const uid = auth.currentUser?.uid;
+// Magasins associés par un représentant à un ou plusieurs items (personnels : ils
+// n'affectent jamais item.stores du catalogue partagé).
+const setRepStoresIn = (kind: CatalogKind, itemIds: string[], storeIds: string[]) => {
+  const uid = dataService.getCurrentUserId();
   if (!uid || itemIds.length === 0) return;
+  const key = KEYS[kind].repStores;
 
   useAppStore.setState((state) => {
-    const next = { ...state[stateKey] };
+    const next = { ...state[key] };
     itemIds.forEach((id) => {
       next[id] = storeIds;
     });
-    return { [stateKey]: next };
+    return { [key]: next };
   });
 
-  itemIds.forEach((itemId) => {
-    setDoc(doc(db, collectionName, `${uid}_${itemId}`), { uid, itemId, stores: storeIds }, { merge: true }).catch(() => {});
-  });
+  dataService.saveRepStores(kind, uid, itemIds, storeIds).catch(() => {});
 };
 
-export const useAppStore = create<AppState>()((set, get) => ({
+// Retire des catalogues les magasins supprimés.
+const unlinkStoresFromCatalogs = async (storeIds: string[]) => {
+  const state = useAppStore.getState();
+  for (const kind of CATALOG_KINDS) {
+    const affected = state[KEYS[kind].items].filter((i) => i.stores.some((sId) => storeIds.includes(sId)));
+    if (affected.length > 0) {
+      await dataService.removeStores(
+        kind,
+        affected.map((i) => i.id),
+        storeIds
+      );
+    }
+  }
+};
+
+export const useAppStore = create<AppState>()((_set, get) => ({
   labels: [],
   proPack: [],
   fanions: [],
@@ -385,42 +272,25 @@ export const useAppStore = create<AppState>()((set, get) => ({
   repQuantitiesLabels: {},
   repQuantitiesProPack: {},
   repQuantitiesFanions: {},
-  setRepQuantityLabels: (itemId, quantity) =>
-    setRepQuantityTo(REP_QUANTITIES_LABELS_COLLECTION, 'repQuantitiesLabels', itemId, quantity),
-  setRepQuantityProPack: (itemId, quantity) =>
-    setRepQuantityTo(REP_QUANTITIES_PROPACK_COLLECTION, 'repQuantitiesProPack', itemId, quantity),
-  setRepQuantityFanions: (itemId, quantity) =>
-    setRepQuantityTo(REP_QUANTITIES_FANIONS_COLLECTION, 'repQuantitiesFanions', itemId, quantity),
+  setRepQuantityLabels: (itemId, quantity) => setRepQuantityIn('labels', itemId, quantity),
+  setRepQuantityProPack: (itemId, quantity) => setRepQuantityIn('propack', itemId, quantity),
+  setRepQuantityFanions: (itemId, quantity) => setRepQuantityIn('fanions', itemId, quantity),
 
   repStoresLabels: {},
   repStoresProPack: {},
   repStoresFanions: {},
-  setRepStoresLabels: (itemIds, storeIds) =>
-    setRepStoresTo(REP_QUANTITIES_LABELS_COLLECTION, 'repStoresLabels', itemIds, storeIds),
-  setRepStoresProPack: (itemIds, storeIds) =>
-    setRepStoresTo(REP_QUANTITIES_PROPACK_COLLECTION, 'repStoresProPack', itemIds, storeIds),
-  setRepStoresFanions: (itemIds, storeIds) =>
-    setRepStoresTo(REP_QUANTITIES_FANIONS_COLLECTION, 'repStoresFanions', itemIds, storeIds),
+  setRepStoresLabels: (itemIds, storeIds) => setRepStoresIn('labels', itemIds, storeIds),
+  setRepStoresProPack: (itemIds, storeIds) => setRepStoresIn('propack', itemIds, storeIds),
+  setRepStoresFanions: (itemIds, storeIds) => setRepStoresIn('fanions', itemIds, storeIds),
 
   userRole: null,
   userName: null,
   users: [],
-  updateUserRole: async (uid, role) => {
-    await updateDoc(doc(db, USERS_COLLECTION, uid), { role });
-  },
-  updateUserName: async (uid, name) => {
-    await updateDoc(doc(db, USERS_COLLECTION, uid), { name: name.trim() });
-  },
+  updateUserRole: (uid, role) => dataService.updateUserRole(uid, role),
+  updateUserName: (uid, name) => dataService.updateUserName(uid, name.trim()),
 
-  addStore: async (name, banner) => {
-    const id = crypto.randomUUID();
-    const batch = writeBatch(db);
-    batch.set(doc(db, STORES_COLLECTION, id), {
-      name: name.trim(),
-      banner: detectBannerFromName(name, banner),
-    });
-    await batch.commit();
-  },
+  addStore: (name, banner) =>
+    dataService.addStores([{ id: crypto.randomUUID(), name: name.trim(), banner: detectBannerFromName(name, banner) }]),
 
   addStoresBatch: async (newStoresInput) => {
     const newStores = newStoresInput
@@ -437,153 +307,53 @@ export const useAppStore = create<AppState>()((set, get) => ({
         banner: detectBannerFromName(s.name, s.banner),
       }));
 
-    await commitInChunks(newStores, (batch, s) => {
-      batch.set(doc(db, STORES_COLLECTION, s.id), { name: s.name, banner: s.banner });
-    });
+    await dataService.addStores(newStores);
   },
 
-  autoFixBanners: async () => {
-    await commitInChunks(get().stores, (batch, s) => {
-      batch.update(doc(db, STORES_COLLECTION, s.id), { banner: detectBannerFromName(s.name, s.banner) });
-    });
-  },
+  autoFixBanners: () =>
+    dataService.updateStoreBanners(
+      get().stores.map((s) => ({ id: s.id, banner: detectBannerFromName(s.name, s.banner) }))
+    ),
 
-  updateStoreBanner: async (storeIds, banner) => {
-    await commitInChunks(storeIds, (batch, id) => {
-      batch.update(doc(db, STORES_COLLECTION, id), { banner: banner.trim() });
-    });
-  },
+  updateStoreBanner: (storeIds, banner) =>
+    dataService.updateStoreBanners(storeIds.map((id) => ({ id, banner: banner.trim() }))),
 
   deleteStore: async (id) => {
-    const affectedLabels = get().labels.filter((l) => l.stores.includes(id));
-    const affectedProPack = get().proPack.filter((f) => f.stores.includes(id));
-    const affectedFanions = get().fanions.filter((f) => f.stores.includes(id));
-    const batch = writeBatch(db);
-    batch.delete(doc(db, STORES_COLLECTION, id));
-    await batch.commit();
-    await commitInChunks(affectedLabels, (b, l) => {
-      b.update(doc(db, LABELS_COLLECTION, l.id), { stores: arrayRemove(id) });
-    });
-    await commitInChunks(affectedProPack, (b, f) => {
-      b.update(doc(db, PROPACK_COLLECTION, f.id), { stores: arrayRemove(id) });
-    });
-    await commitInChunks(affectedFanions, (b, f) => {
-      b.update(doc(db, FANIONS_COLLECTION, f.id), { stores: arrayRemove(id) });
-    });
+    await dataService.deleteStores([id]);
+    await unlinkStoresFromCatalogs([id]);
   },
 
   deleteStoresBatch: async (storeIds) => {
-    await commitInChunks(storeIds, (batch, id) => {
-      batch.delete(doc(db, STORES_COLLECTION, id));
-    });
-    const affectedLabels = get().labels.filter((l) => l.stores.some((sId) => storeIds.includes(sId)));
-    await commitInChunks(affectedLabels, (batch, l) => {
-      batch.update(doc(db, LABELS_COLLECTION, l.id), {
-        stores: l.stores.filter((sId) => !storeIds.includes(sId)),
-      });
-    });
-    const affectedProPack = get().proPack.filter((f) => f.stores.some((sId) => storeIds.includes(sId)));
-    await commitInChunks(affectedProPack, (batch, f) => {
-      batch.update(doc(db, PROPACK_COLLECTION, f.id), {
-        stores: f.stores.filter((sId) => !storeIds.includes(sId)),
-      });
-    });
-    const affectedFanions = get().fanions.filter((f) => f.stores.some((sId) => storeIds.includes(sId)));
-    await commitInChunks(affectedFanions, (batch, f) => {
-      batch.update(doc(db, FANIONS_COLLECTION, f.id), {
-        stores: f.stores.filter((sId) => !storeIds.includes(sId)),
-      });
-    });
+    await dataService.deleteStores(storeIds);
+    await unlinkStoresFromCatalogs(storeIds);
   },
 
-  addLabelsBatch: (newLabels) => addItemsBatchTo(LABELS_COLLECTION, newLabels),
+  addLabelsBatch: (items) => dataService.addItems('labels', items),
+  updateLabel: (id, fields) => updateItemIn('labels', id, fields),
+  deleteLabel: (id) => deleteItemIn('labels', id),
+  assignStoresToLabels: (ids, storeIds) => dataService.assignStores('labels', ids, storeIds),
+  removeStoresFromLabels: (ids, storeIds) => dataService.removeStores('labels', ids, storeIds),
+  clearLabels: () => dataService.clearItems('labels', get().labels),
+  logPrintRun: (entry) => logRunIn('labels', entry),
+  clearPrintHistory: () => dataService.clearHistory('labels'),
 
-  updateLabel: (id, updatedFields) => {
-    // Mise à jour optimiste immédiate pour garder la saisie fluide...
-    set((state) => ({
-      labels: state.labels.map((l) => (l.id === id ? { ...l, ...updatedFields } : l)),
-    }));
+  addProPackBatch: (items) => dataService.addItems('propack', items),
+  updateProPackItem: (id, fields) => updateItemIn('propack', id, fields),
+  deleteProPackItem: (id) => deleteItemIn('propack', id),
+  assignStoresToProPack: (ids, storeIds) => dataService.assignStores('propack', ids, storeIds),
+  removeStoresFromProPack: (ids, storeIds) => dataService.removeStores('propack', ids, storeIds),
+  clearProPack: () => dataService.clearItems('propack', get().proPack),
+  logProPackPrintRun: (entry) => logRunIn('propack', entry),
+  clearProPackPrintHistory: () => dataService.clearHistory('propack'),
 
-    // ...écriture Firestore différée pour éviter une requête réseau par frappe.
-    const existingTimeout = pendingLabelWrites.get(id);
-    if (existingTimeout) clearTimeout(existingTimeout);
-    pendingLabelWrites.set(
-      id,
-      setTimeout(() => {
-        pendingLabelWrites.delete(id);
-        updateDoc(doc(db, LABELS_COLLECTION, id), updatedFields).catch(() => {
-          // L'étiquette a probablement été supprimée entre-temps : rien à faire.
-        });
-      }, LABEL_WRITE_DEBOUNCE_MS)
-    );
-  },
-
-  deleteLabel: (id) => deleteItemFrom(LABELS_COLLECTION, pendingLabelWrites, id),
-  assignStoresToLabels: (labelIds, storeIds) => assignStoresTo(LABELS_COLLECTION, labelIds, storeIds),
-  removeStoresFromLabels: (labelIds, storeIds) => removeStoresFrom(LABELS_COLLECTION, labelIds, storeIds),
-  clearLabels: () => clearItemsFrom(LABELS_COLLECTION, get().labels),
-  logPrintRun: (entry) => logRunTo(PRINT_HISTORY_COLLECTION, entry),
-  clearPrintHistory: () => clearHistoryCollection(PRINT_HISTORY_COLLECTION),
-
-  addProPackBatch: (newItems) => addItemsBatchTo(PROPACK_COLLECTION, newItems),
-
-  updateProPackItem: (id, updatedFields) => {
-    set((state) => ({
-      proPack: state.proPack.map((f) => (f.id === id ? { ...f, ...updatedFields } : f)),
-    }));
-
-    const existingTimeout = pendingProPackWrites.get(id);
-    if (existingTimeout) clearTimeout(existingTimeout);
-    pendingProPackWrites.set(
-      id,
-      setTimeout(() => {
-        pendingProPackWrites.delete(id);
-        updateDoc(doc(db, PROPACK_COLLECTION, id), updatedFields).catch(() => {
-          // L'item a probablement été supprimé entre-temps : rien à faire.
-        });
-      }, LABEL_WRITE_DEBOUNCE_MS)
-    );
-  },
-
-  deleteProPackItem: (id) => deleteItemFrom(PROPACK_COLLECTION, pendingProPackWrites, id),
-  assignStoresToProPack: (itemIds, storeIds) => assignStoresTo(PROPACK_COLLECTION, itemIds, storeIds),
-  removeStoresFromProPack: (itemIds, storeIds) => removeStoresFrom(PROPACK_COLLECTION, itemIds, storeIds),
-  clearProPack: () => clearItemsFrom(PROPACK_COLLECTION, get().proPack),
-  logProPackPrintRun: (entry) => logRunTo(PROPACK_PRINT_HISTORY_COLLECTION, entry),
-  clearProPackPrintHistory: async () => {
-    // Empêche la migration de l'ancien historique « fanionPrintHistory », qui se
-    // déclenche sur un snapshot vide : sans ça, vider l'historique le ferait
-    // ressusciter depuis l'ancienne collection.
-    proPackHistoryMigrated = true;
-    await clearHistoryCollection(PROPACK_PRINT_HISTORY_COLLECTION);
-  },
-
-  addFanionsBatch: (newItems) => addItemsBatchTo(FANIONS_COLLECTION, newItems),
-
-  updateFanionsItem: (id, updatedFields) => {
-    set((state) => ({
-      fanions: state.fanions.map((f) => (f.id === id ? { ...f, ...updatedFields } : f)),
-    }));
-
-    const existingTimeout = pendingFanionsWrites.get(id);
-    if (existingTimeout) clearTimeout(existingTimeout);
-    pendingFanionsWrites.set(
-      id,
-      setTimeout(() => {
-        pendingFanionsWrites.delete(id);
-        updateDoc(doc(db, FANIONS_COLLECTION, id), updatedFields).catch(() => {
-          // L'item a probablement été supprimé entre-temps : rien à faire.
-        });
-      }, LABEL_WRITE_DEBOUNCE_MS)
-    );
-  },
-
-  deleteFanionsItem: (id) => deleteItemFrom(FANIONS_COLLECTION, pendingFanionsWrites, id),
-  assignStoresToFanions: (itemIds, storeIds) => assignStoresTo(FANIONS_COLLECTION, itemIds, storeIds),
-  removeStoresFromFanions: (itemIds, storeIds) => removeStoresFrom(FANIONS_COLLECTION, itemIds, storeIds),
-  clearFanions: () => clearItemsFrom(FANIONS_COLLECTION, get().fanions),
-  logFanionsPrintRun: (entry) => logRunTo(FANIONS_PRINT_HISTORY_COLLECTION, entry),
-  clearFanionsPrintHistory: () => clearHistoryCollection(FANIONS_PRINT_HISTORY_COLLECTION),
+  addFanionsBatch: (items) => dataService.addItems('fanions', items),
+  updateFanionsItem: (id, fields) => updateItemIn('fanions', id, fields),
+  deleteFanionsItem: (id) => deleteItemIn('fanions', id),
+  assignStoresToFanions: (ids, storeIds) => dataService.assignStores('fanions', ids, storeIds),
+  removeStoresFromFanions: (ids, storeIds) => dataService.removeStores('fanions', ids, storeIds),
+  clearFanions: () => dataService.clearItems('fanions', get().fanions),
+  logFanionsPrintRun: (entry) => logRunIn('fanions', entry),
+  clearFanionsPrintHistory: () => dataService.clearHistory('fanions'),
 
   // Exporter tout le projet en JSON (étiquettes, Pro-Pack, Fanions et magasins)
   exportProject: () => {
@@ -603,63 +373,22 @@ export const useAppStore = create<AppState>()((set, get) => ({
     a.click();
   },
 
-  // Importer un projet JSON existant (remplace les données partagées Firestore)
+  // Importer un projet JSON existant (remplace les données partagées)
   importProject: async (jsonData) => {
     if (!jsonData.stores || !jsonData.labels) return;
-
-    await commitInChunks(get().labels, (batch, l) => {
-      batch.delete(doc(db, LABELS_COLLECTION, l.id));
-    });
-    await commitInChunks(get().proPack, (batch, f) => {
-      batch.delete(doc(db, PROPACK_COLLECTION, f.id));
-    });
-    await commitInChunks(get().fanions, (batch, f) => {
-      batch.delete(doc(db, FANIONS_COLLECTION, f.id));
-    });
-    await commitInChunks(get().stores, (batch, s) => {
-      batch.delete(doc(db, STORES_COLLECTION, s.id));
-    });
-    await commitInChunks(jsonData.stores, (batch, s) => {
-      const { id, ...rest } = s;
-      batch.set(doc(db, STORES_COLLECTION, id), rest);
-    });
-    await commitInChunks(jsonData.labels, (batch, l) => {
-      const { id, ...rest } = l;
-      batch.set(doc(db, LABELS_COLLECTION, id), rest);
-    });
-    if (jsonData.proPack) {
-      await commitInChunks(jsonData.proPack, (batch, f) => {
-        const { id, ...rest } = f;
-        batch.set(doc(db, PROPACK_COLLECTION, id), rest);
-      });
-    }
-    if (jsonData.fanions) {
-      await commitInChunks(jsonData.fanions, (batch, f) => {
-        const { id, ...rest } = f;
-        batch.set(doc(db, FANIONS_COLLECTION, id), rest);
-      });
-    }
+    const { stores, labels, proPack, fanions } = get();
+    await dataService.replaceProject({ stores, labels, proPack, fanions }, jsonData);
   },
 }));
+
+// --- Synchronisation ---
 
 let storesLoaded = false;
 let labelsLoaded = false;
 let proPackLoaded = false;
 let fanionsLoaded = false;
-let defaultStoresSeeded = false;
-let proPackMigrated = false;
-let proPackHistoryMigrated = false;
-let unsubscribeStores: (() => void) | null = null;
-let unsubscribeLabels: (() => void) | null = null;
-let unsubscribeProPack: (() => void) | null = null;
-let unsubscribeFanions: (() => void) | null = null;
-let unsubscribePrintHistory: (() => void) | null = null;
-let unsubscribeProPackPrintHistory: (() => void) | null = null;
-let unsubscribeFanionsPrintHistory: (() => void) | null = null;
-let unsubscribeRepQuantitiesLabels: (() => void) | null = null;
-let unsubscribeRepQuantitiesProPack: (() => void) | null = null;
-let unsubscribeRepQuantitiesFanions: (() => void) | null = null;
 let userRoleLoaded = false;
+let unsubscribers: (() => void)[] = [];
 let unsubscribeOwnUserDoc: (() => void) | null = null;
 let unsubscribeUsers: (() => void) | null = null;
 
@@ -669,45 +398,25 @@ const markLoadedIfReady = () => {
   }
 };
 
-// Garantit que le document de rôle du compte existe AVANT de démarrer le
-// reste de la synchronisation Firestore (startFirestoreSync peut, à la toute
-// première connexion sur un projet vide, déclencher une écriture réservée
-// aux admins — l'amorçage des magasins par défaut). Sans cette étape
-// bloquante, cette écriture pourrait partir avant que users/{uid} n'existe
-// et être refusée par isAdmin() côté règles.
-const ensureUserRoleDoc = async (uid: string, email: string | null): Promise<void> => {
-  const ref = doc(db, USERS_COLLECTION, uid);
-  const snap = await getDoc(ref);
-  if (!snap.exists()) {
-    await setDoc(ref, { email: email ?? '', role: inferRoleFromEmail(email) });
-  }
-};
-
 // Abonnement en continu au rôle du compte connecté (pris en compte sans
 // re-login si un admin le modifie depuis le panneau « Accès »). Seul un admin
-// a en plus besoin de la liste complète des comptes (alimente ce panneau),
-// donc on ne s'y abonne que dans ce cas pour ne jamais tenter une lecture
-// refusée côté représentant.
+// a en plus besoin de la liste complète des comptes, donc on ne s'y abonne que
+// dans ce cas pour ne jamais tenter une lecture refusée côté représentant.
 const startRoleSync = (uid: string) => {
   userRoleLoaded = false;
 
-  unsubscribeOwnUserDoc = onSnapshot(
-    doc(db, USERS_COLLECTION, uid),
-    (snap) => {
-      if (!snap.exists()) return; // création en cours (voir ensureUserRoleDoc)
+  unsubscribeOwnUserDoc = dataService.subscribeOwnProfile(
+    uid,
+    (profile) => {
+      if (!profile) return; // création en cours (voir ensureUserProfile)
 
-      const data = snap.data() as { role: UserRole; email?: string; name?: string };
-      useAppStore.setState({ userRole: data.role, userName: data.name?.trim() || data.email || null });
+      useAppStore.setState({ userRole: profile.role, userName: profile.name?.trim() || profile.email || null });
       userRoleLoaded = true;
       markLoadedIfReady();
 
-      if (data.role === 'admin' && !unsubscribeUsers) {
-        unsubscribeUsers = onSnapshot(
-          collection(db, USERS_COLLECTION),
-          (usersSnap) => {
-            const users = usersSnap.docs.map((d) => ({ id: d.id, ...d.data() }) as AppUser);
-            useAppStore.setState({ users });
-          },
+      if (profile.role === 'admin' && !unsubscribeUsers) {
+        unsubscribeUsers = dataService.subscribeUsers(
+          (users) => useAppStore.setState({ users }),
           (error) => console.error('Erreur de synchronisation des comptes :', error)
         );
       }
@@ -725,186 +434,86 @@ const stopRoleSync = () => {
   useAppStore.setState({ userRole: null, userName: null, users: [] });
 };
 
-// La synchronisation Firestore ne démarre qu'une fois l'utilisateur authentifié
-// (les règles de sécurité exigent request.auth != null) et s'arrête à la déconnexion.
-// `uid` sert à filtrer les quantités personnelles des représentants (voir plus bas)
-// pour que chacun ne charge et ne voie jamais que les siennes.
-const startFirestoreSync = (uid: string) => {
+const CATALOG_LABELS: Record<CatalogKind, string> = {
+  labels: 'des étiquettes',
+  propack: 'du Pro-Pack',
+  fanions: 'des Fanions',
+};
+const HISTORY_LABELS: Record<CatalogKind, string> = {
+  labels: '',
+  propack: ' Pro-Pack',
+  fanions: ' Fanions',
+};
+const REP_LABELS: Record<CatalogKind, string> = {
+  labels: 'Étiquettes',
+  propack: 'Pro-Pack',
+  fanions: 'Fanions',
+};
+
+// La synchronisation ne démarre qu'une fois l'utilisateur authentifié et s'arrête
+// à la déconnexion. `uid` sert à filtrer les sélections personnelles des
+// représentants pour que chacun ne charge et ne voie jamais que les siennes.
+const startDataSync = (uid: string) => {
   storesLoaded = false;
   labelsLoaded = false;
   proPackLoaded = false;
   fanionsLoaded = false;
 
-  unsubscribeStores = onSnapshot(
-    collection(db, STORES_COLLECTION),
-    async (snapshot) => {
-      // Amorce les magasins par défaut si la collection est vide au tout premier chargement.
-      if (snapshot.empty && !storesLoaded && !defaultStoresSeeded) {
-        defaultStoresSeeded = true;
-        const batch = writeBatch(db);
-        for (const s of DEFAULT_STORES) {
-          batch.set(doc(collection(db, STORES_COLLECTION)), s);
-        }
-        await batch.commit();
-        return; // le prochain snapshot contiendra les magasins par défaut
-      }
-
-      const stores = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as StoreItem);
-      useAppStore.setState({ stores });
-      storesLoaded = true;
-      markLoadedIfReady();
-    },
-    (error) => console.error('Erreur de synchronisation des magasins :', error)
+  unsubscribers.push(
+    dataService.subscribeStores(
+      (stores) => {
+        useAppStore.setState({ stores });
+        storesLoaded = true;
+        markLoadedIfReady();
+      },
+      (error) => console.error('Erreur de synchronisation des magasins :', error)
+    )
   );
 
-  unsubscribeLabels = onSnapshot(
-    collection(db, LABELS_COLLECTION),
-    (snapshot) => {
-      const labels = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as LabelItem);
-      useAppStore.setState({ labels });
-      labelsLoaded = true;
-      markLoadedIfReady();
-    },
-    (error) => console.error('Erreur de synchronisation des étiquettes :', error)
-  );
+  CATALOG_KINDS.forEach((kind) => {
+    const keys = KEYS[kind];
 
-  unsubscribeProPack = onSnapshot(
-    collection(db, PROPACK_COLLECTION),
-    async (snapshot) => {
-      // Migre une seule fois les items de l'ancienne collection "fanions" (avant le
-      // renommage en Pro-Pack) si la nouvelle collection est encore vide.
-      if (snapshot.empty && !proPackLoaded && !proPackMigrated) {
-        proPackMigrated = true;
-        const migrated = await migrateLegacyCollection(LEGACY_FANIONS_COLLECTION, PROPACK_COLLECTION);
-        if (migrated) return; // le prochain snapshot contiendra les items migrés
-      }
+    unsubscribers.push(
+      dataService.subscribeCatalog(
+        kind,
+        (items) => {
+          useAppStore.setState({ [keys.items]: items } as Partial<AppState>);
+          if (kind === 'labels') labelsLoaded = true;
+          if (kind === 'propack') proPackLoaded = true;
+          if (kind === 'fanions') fanionsLoaded = true;
+          markLoadedIfReady();
+        },
+        (error) => console.error(`Erreur de synchronisation ${CATALOG_LABELS[kind]} :`, error)
+      )
+    );
 
-      const proPack = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as LabelItem);
-      useAppStore.setState({ proPack });
-      proPackLoaded = true;
-      markLoadedIfReady();
-    },
-    (error) => console.error('Erreur de synchronisation du Pro-Pack :', error)
-  );
+    unsubscribers.push(
+      dataService.subscribeHistory(
+        kind,
+        PRINT_HISTORY_LIMIT,
+        (entries) => useAppStore.setState({ [keys.history]: entries } as Partial<AppState>),
+        (error) => console.error(`Erreur de synchronisation de l'historique d'impression${HISTORY_LABELS[kind]} :`, error)
+      )
+    );
 
-  unsubscribeFanions = onSnapshot(
-    collection(db, FANIONS_COLLECTION),
-    (snapshot) => {
-      const fanions = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as LabelItem);
-      useAppStore.setState({ fanions });
-      fanionsLoaded = true;
-      markLoadedIfReady();
-    },
-    (error) => console.error('Erreur de synchronisation des Fanions :', error)
-  );
-
-  unsubscribePrintHistory = onSnapshot(
-    query(collection(db, PRINT_HISTORY_COLLECTION), orderBy('createdAt', 'desc'), limit(PRINT_HISTORY_LIMIT)),
-    (snapshot) => {
-      const printHistory = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as PrintHistoryEntry);
-      useAppStore.setState({ printHistory });
-    },
-    (error) => console.error("Erreur de synchronisation de l'historique d'impression :", error)
-  );
-
-  unsubscribeProPackPrintHistory = onSnapshot(
-    query(collection(db, PROPACK_PRINT_HISTORY_COLLECTION), orderBy('createdAt', 'desc'), limit(PRINT_HISTORY_LIMIT)),
-    async (snapshot) => {
-      if (snapshot.empty && !proPackHistoryMigrated) {
-        proPackHistoryMigrated = true;
-        const migrated = await migrateLegacyCollection(
-          LEGACY_FANION_PRINT_HISTORY_COLLECTION,
-          PROPACK_PRINT_HISTORY_COLLECTION
-        );
-        if (migrated) return;
-      }
-
-      const proPackPrintHistory = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as PrintHistoryEntry);
-      useAppStore.setState({ proPackPrintHistory });
-    },
-    (error) => console.error("Erreur de synchronisation de l'historique d'impression Pro-Pack :", error)
-  );
-
-  unsubscribeFanionsPrintHistory = onSnapshot(
-    query(collection(db, FANIONS_PRINT_HISTORY_COLLECTION), orderBy('createdAt', 'desc'), limit(PRINT_HISTORY_LIMIT)),
-    (snapshot) => {
-      const fanionsPrintHistory = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as PrintHistoryEntry);
-      useAppStore.setState({ fanionsPrintHistory });
-    },
-    (error) => console.error("Erreur de synchronisation de l'historique d'impression Fanions :", error)
-  );
-
-  // Quantités personnelles des représentants : filtrées par uid dès la requête
-  // Firestore (pas seulement côté affichage), pour que ce représentant ne
-  // reçoive jamais les quantités d'un autre représentant.
-  unsubscribeRepQuantitiesLabels = onSnapshot(
-    query(collection(db, REP_QUANTITIES_LABELS_COLLECTION), where('uid', '==', uid)),
-    (snapshot) => {
-      const repQuantitiesLabels: Record<string, number> = {};
-      const repStoresLabels: Record<string, string[]> = {};
-      snapshot.docs.forEach((d) => {
-        const data = d.data() as { itemId: string; quantity?: number; stores?: string[] };
-        if (data.quantity !== undefined) repQuantitiesLabels[data.itemId] = data.quantity;
-        if (data.stores) repStoresLabels[data.itemId] = data.stores;
-      });
-      useAppStore.setState({ repQuantitiesLabels, repStoresLabels });
-    },
-    (error) => console.error('Erreur de synchronisation des quantités personnelles (Étiquettes) :', error)
-  );
-
-  unsubscribeRepQuantitiesProPack = onSnapshot(
-    query(collection(db, REP_QUANTITIES_PROPACK_COLLECTION), where('uid', '==', uid)),
-    (snapshot) => {
-      const repQuantitiesProPack: Record<string, number> = {};
-      const repStoresProPack: Record<string, string[]> = {};
-      snapshot.docs.forEach((d) => {
-        const data = d.data() as { itemId: string; quantity?: number; stores?: string[] };
-        if (data.quantity !== undefined) repQuantitiesProPack[data.itemId] = data.quantity;
-        if (data.stores) repStoresProPack[data.itemId] = data.stores;
-      });
-      useAppStore.setState({ repQuantitiesProPack, repStoresProPack });
-    },
-    (error) => console.error('Erreur de synchronisation des quantités personnelles (Pro-Pack) :', error)
-  );
-
-  unsubscribeRepQuantitiesFanions = onSnapshot(
-    query(collection(db, REP_QUANTITIES_FANIONS_COLLECTION), where('uid', '==', uid)),
-    (snapshot) => {
-      const repQuantitiesFanions: Record<string, number> = {};
-      const repStoresFanions: Record<string, string[]> = {};
-      snapshot.docs.forEach((d) => {
-        const data = d.data() as { itemId: string; quantity?: number; stores?: string[] };
-        if (data.quantity !== undefined) repQuantitiesFanions[data.itemId] = data.quantity;
-        if (data.stores) repStoresFanions[data.itemId] = data.stores;
-      });
-      useAppStore.setState({ repQuantitiesFanions, repStoresFanions });
-    },
-    (error) => console.error('Erreur de synchronisation des quantités personnelles (Fanions) :', error)
-  );
+    unsubscribers.push(
+      dataService.subscribeRepSelections(
+        kind,
+        uid,
+        (selections: RepSelections) =>
+          useAppStore.setState({
+            [keys.repQuantities]: selections.quantities,
+            [keys.repStores]: selections.stores,
+          } as Partial<AppState>),
+        (error) => console.error(`Erreur de synchronisation des quantités personnelles (${REP_LABELS[kind]}) :`, error)
+      )
+    );
+  });
 };
 
-const stopFirestoreSync = () => {
-  unsubscribeStores?.();
-  unsubscribeLabels?.();
-  unsubscribeProPack?.();
-  unsubscribeFanions?.();
-  unsubscribePrintHistory?.();
-  unsubscribeProPackPrintHistory?.();
-  unsubscribeFanionsPrintHistory?.();
-  unsubscribeRepQuantitiesLabels?.();
-  unsubscribeRepQuantitiesProPack?.();
-  unsubscribeRepQuantitiesFanions?.();
-  unsubscribeStores = null;
-  unsubscribeLabels = null;
-  unsubscribeProPack = null;
-  unsubscribeFanions = null;
-  unsubscribePrintHistory = null;
-  unsubscribeProPackPrintHistory = null;
-  unsubscribeFanionsPrintHistory = null;
-  unsubscribeRepQuantitiesLabels = null;
-  unsubscribeRepQuantitiesProPack = null;
-  unsubscribeRepQuantitiesFanions = null;
-  defaultStoresSeeded = false;
+const stopDataSync = () => {
+  unsubscribers.forEach((unsubscribe) => unsubscribe());
+  unsubscribers = [];
   useAppStore.setState({
     labels: [],
     proPack: [],
@@ -923,16 +532,20 @@ const stopFirestoreSync = () => {
   });
 };
 
-onAuthStateChanged(auth, (user) => {
+dataService.onAuthStateChanged((user) => {
   if (user) {
-    ensureUserRoleDoc(user.uid, user.email)
+    // Le profil (rôle) doit exister AVANT le démarrage de la synchronisation : à la
+    // toute première connexion, l'amorçage des magasins par défaut est réservé aux
+    // admins et serait refusé tant que le profil n'existe pas.
+    dataService
+      .ensureUserProfile(user)
       .catch((error) => console.error('Erreur de création du rôle :', error))
       .finally(() => {
-        startFirestoreSync(user.uid);
+        startDataSync(user.uid);
         startRoleSync(user.uid);
       });
   } else {
-    stopFirestoreSync();
+    stopDataSync();
     stopRoleSync();
   }
 });

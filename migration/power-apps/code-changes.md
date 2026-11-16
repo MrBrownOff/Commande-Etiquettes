@@ -2,7 +2,7 @@
 
 Principe : ne pas toucher aux écrans, remplacer la couche données.
 
-1. **Couche d'accès** : extraire de `src/store/store.ts` une interface `DataService`
+1. **Couche d'accès (FAIT)** : `src/data/` contient l'interface `DataService`, l'implémentation Firebase (`firebaseDataService.ts`, comportement inchangé) et un squelette Dataverse (`dataverseDataService.ts`). Le store n'importe plus Firebase ; seul `src/data/firebaseDataService.ts` (et `src/firebase.ts`) le fait. Reste à écrire l'implémentation Dataverse. Description initiale : extraire de `src/store/store.ts` une interface `DataService`
    (stores, catalogues, historiques, sélections de représentant, utilisateurs) avec deux
    implémentations : `FirebaseDataService` (existante) et `DataverseDataService`.
    Sélection par variable de build `VITE_BACKEND=firebase|dataverse`.

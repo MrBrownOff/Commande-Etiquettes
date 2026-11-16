@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAppStore, UserRole } from '../store/store';
 import { Users, ShieldCheck, User } from 'lucide-react';
-import { auth } from '../firebase';
+import { dataService } from '../data';
 
 // Champ de saisie du nom d'un compte : enregistré à la sortie du champ ou sur
 // Entrée, uniquement si la valeur a changé.
@@ -36,7 +36,7 @@ const NameInput: React.FC<{ uid: string; name: string; onSave: (uid: string, nam
 // d'entre eux, sans devoir recréer le compte côté Firebase Auth.
 export const AccessView: React.FC = () => {
   const { users, updateUserRole, updateUserName } = useAppStore();
-  const currentUid = auth.currentUser?.uid;
+  const currentUid = dataService.getCurrentUserId();
 
   const sortedUsers = [...users].sort((a, b) => a.email.localeCompare(b.email, 'fr', { sensitivity: 'base' }));
 

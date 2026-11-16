@@ -1,9 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { onAuthStateChanged, signInWithEmailAndPassword, signOut, User } from 'firebase/auth';
-import { auth } from '../firebase';
+import { dataService, SessionUser } from '../data';
 import { ArrowLeft, Loader2, Lock, Printer, Users } from 'lucide-react';
 
-export const signOutUser = () => signOut(auth);
+export const signOutUser = () => dataService.signOut();
 
 interface AuthGateProps {
   children: React.ReactNode;
@@ -19,10 +18,10 @@ const PORTAL_LABELS: Record<Portal, string> = {
   representant: 'Représentants',
 };
 
-// N'affiche l'application que pour un utilisateur authentifié via Firebase Auth ;
+// N'affiche l'application que pour un utilisateur authentifié ;
 // affiche un écran d'accueil puis de connexion (email/mot de passe) sinon.
 export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
-  const [user, setUser] = useState<User | null | undefined>(undefined); // undefined = chargement initial
+  const [user, setUser] = useState<SessionUser | null | undefined>(undefined); // undefined = chargement initial
   const [portal, setPortal] = useState<Portal | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -30,7 +29,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, setUser);
+    const unsubscribe = dataService.onAuthStateChanged(setUser);
     return unsubscribe;
   }, []);
 
@@ -39,7 +38,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
     setError(null);
     setIsSubmitting(true);
     try {
-      await signInWithEmailAndPassword(auth, email.trim(), password);
+      await dataService.signIn(email.trim(), password);
     } catch {
       setError('Email ou mot de passe incorrect.');
     } finally {

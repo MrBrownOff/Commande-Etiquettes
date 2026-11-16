@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight, History, Loader2, Printer } from 'lucide-react';
 import { LabelItem, PrintHistoryEntry, useAppStore } from '../store/store';
-import { auth } from '../firebase';
+import { dataService } from '../data';
 import { generatePrinterPDF, PrintableKind } from '../utils/printerExport';
 
 const KIND_LABELS: Record<PrintableKind, { label: string; noun: string }> = {
@@ -26,7 +26,7 @@ const formatDate = (entry: PrintHistoryEntry): string => {
 export const RepresentantHistory: React.FC = () => {
   const store = useAppStore();
   const { stores, userName } = store;
-  const uid = auth.currentUser?.uid;
+  const uid = dataService.getCurrentUserId();
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [generatingId, setGeneratingId] = useState<string | null>(null);
 
