@@ -281,27 +281,15 @@ export const generatePrinterPDF = async (
     const w = embedded.width * ratio;
     const h = embedded.height * ratio;
 
-    // La page de destination doit pouvoir accueillir l'item source en entier,
-    // marge de fond perdu et traits de coupe compris (w/h, potentiellement plus
-    // grands que la taille de coupe cible quand le ratio vaut 1 — ex: Pro-Pack et
-    // fanions, dont le format cible correspond pile à la TrimBox) : sinon cette
-    // marge dépasse de la page et les traits de coupe sont rognés à l'export.
-    // On ne réduit jamais non plus en dessous d'une feuille A4.
-    const itemPageWidth = Math.max(PAGE_WIDTH, itemWidthPt, w);
-    const itemPageHeight = Math.max(PAGE_HEIGHT, itemHeightPt, h);
-
-    // On centre la TrimBox sur la page (pas le coin de la page entière),
-    // pour que la marge de fond perdu et les traits de coupe restent
-    // répartis également autour de l'item et exploitables au massicot.
-    let x: number;
-    let y: number;
-    if (trimBox) {
-      x = itemPageWidth / 2 - (trimBox.x + trimBox.width / 2) * ratio;
-      y = itemPageHeight / 2 - (trimBox.y + trimBox.height / 2) * ratio;
-    } else {
-      x = (itemPageWidth - w) / 2;
-      y = (itemPageHeight - h) / 2;
-    }
+    // La page de destination épouse exactement l'item source (w x h) : pour un
+    // PDF maître, c'est la page complète avec fond perdu et traits de coupe,
+    // sans aucun espace blanc autour ; la TrimBox sert uniquement au ratio
+    // ci-dessus pour que la zone de coupe fasse la taille cible. Pour le repli
+    // JPEG (sans traits de coupe), la page fait la taille de l'image.
+    const itemPageWidth = w;
+    const itemPageHeight = h;
+    const x = 0;
+    const y = 0;
 
     for (let i = 0; i < qty; i++) {
       const page = pdfDoc.addPage([itemPageWidth, itemPageHeight]);
