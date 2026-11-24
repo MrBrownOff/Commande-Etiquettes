@@ -4,6 +4,7 @@ import { Search, Loader2, CheckSquare, Square, Printer, LogOut, Tag, Flag, Bookm
 import { generatePrinterPDF, PrintableKind } from '../utils/printerExport';
 import { advanceImageFallback, getImageUrlCandidates } from '../utils/assetPaths';
 import { signOutUser } from './AuthGate';
+import { getDisplayReference, getLabelSizeLabel } from '../constants/categories';
 import { StoreAssignPopover } from './StoreAssignPopover';
 import { BatchStoreAssignPopover } from './BatchStoreAssignPopover';
 import { RepresentantHistory } from './RepresentantHistory';
@@ -459,6 +460,7 @@ export const RepresentantView: React.FC = () => {
             {filteredItems.map((item) => {
               const isSelected = selectedItemIds.includes(item.id);
               const imageCandidates = getImageUrlCandidates(imgFolder, item.reference);
+              const sizeLabel = getLabelSizeLabel(item.reference, item.category);
               const initialImageSrc = item.thumbnailUrl || item.imageUrl || imageCandidates[0];
 
               return (
@@ -493,7 +495,7 @@ export const RepresentantView: React.FC = () => {
                   <div className="p-4 flex items-end gap-2">
                     <div className="flex-1 min-w-0">
                       <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">Référence produit</label>
-                      <p className="font-mono font-bold text-gray-800 truncate">{item.reference}</p>
+                      <p className="font-mono font-bold text-gray-800 truncate" title={item.reference}>{activeType === 'labels' ? getDisplayReference(item.reference) : item.reference}</p>
                     </div>
                     <div className="w-16">
                       <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">Qté</label>
@@ -513,6 +515,11 @@ export const RepresentantView: React.FC = () => {
                   </div>
 
                   <div className="px-4 pb-4 space-y-2">
+                    {activeType === 'labels' && sizeLabel && (
+                      <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
+                        Format de l'étiquette : <span className="text-gray-800 normal-case tracking-normal">{sizeLabel}</span>
+                      </p>
+                    )}
                     <StoreAssignPopover
                       assignedStoreIds={repStores[item.id] ?? []}
                       onChangeStores={(ids) => setRepStores([item.id], ids)}
