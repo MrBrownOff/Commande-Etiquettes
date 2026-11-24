@@ -1,6 +1,7 @@
 import { PDFDocument, PDFFont, StandardFonts, rgb } from 'pdf-lib';
 import { LabelItem, StoreItem } from '../store/store';
 import { LABEL_SIZE_BY_CATEGORY } from '../constants/categories';
+import { getAssetUrlCandidates, getImageUrlCandidates } from './assetPaths';
 
 const PT_PER_MM = 72 / 25.4;
 const PAGE_WIDTH = 595.28; // A4 en points (210mm)
@@ -71,14 +72,9 @@ const KIND_CONFIG: Record<
 // survivent pas à un rechargement de page ou à une restauration de projet JSON — dans
 // ce cas on doit se rabattre sur le fichier statique nommé d'après la référence.
 const getItemImageCandidates = (item: LabelItem, imgFolder: string): string[] => {
-  const candidates = [item.thumbnailUrl, item.imageUrl];
-  candidates.push(`${import.meta.env.BASE_URL}${imgFolder}/${item.reference}.jpg`);
-  candidates.push(`${import.meta.env.BASE_URL}${item.reference}.jpg`);
+  const candidates = [item.thumbnailUrl, item.imageUrl, ...getImageUrlCandidates(imgFolder, item.reference)];
   return Array.from(new Set(candidates.filter((src): src is string => Boolean(src))));
 };
-
-const getItemPdfCandidate = (item: LabelItem, pdfFolder: string): string =>
-  `${import.meta.env.BASE_URL}${pdfFolder}/${item.reference}.pdf`;
 
 // Dossier des PDF maîtres par type d'item : utilisé aussi par detectLabelCategory.ts
 // pour mesurer la TrimBox du PDF maître d'une référence à l'import, sans dupliquer
@@ -110,33 +106,34 @@ const embedItem = async (
   pdfFolder: string,
   imgFolder: string
 ): Promise<EmbeddedItem | null> => {
-  try {
-    const res = await fetch(getItemPdfCandidate(item, pdfFolder));
-    if (res.ok) {
+  for (const url of getAssetUrlCandidates(pdfFolder, item.reference, 'pdf')) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) continue;
       const bytes = await res.arrayBuffer();
       const srcDoc = await PDFDocument.load(bytes);
-      if (srcDoc.getPageCount() > 0) {
-        const srcPage = srcDoc.getPage(0);
-        // La page source contient une marge de fond perdu et des traits de
-        // coupe pour l'imprimerie : sa MediaBox est plus grande que la taille
-        // réelle de l'item une fois coupé, définie par sa TrimBox. On intègre
-        // la page complète (marge + traits de coupe conservés pour le
-        // massicot), mais le ratio d'ajustement et le centrage plus bas se
-        // basent sur la TrimBox pour que la zone de coupe finale fasse
-        // exactement la taille cible, peu importe la taille de la marge autour.
-        const [embedded] = await pdfDoc.embedPdf(srcDoc, [0]);
-        const tb = srcPage.getTrimBox();
-        return {
-          kind: 'pdf',
-          source: embedded,
-          width: embedded.width,
-          height: embedded.height,
-          trimBox: { x: tb.x, y: tb.y, width: tb.width, height: tb.height },
-        };
-      }
+      if (srcDoc.getPageCount() === 0) continue;
+      const srcPage = srcDoc.getPage(0);
+      // La page source contient une marge de fond perdu et des traits de
+      // coupe pour l'imprimerie : sa MediaBox est plus grande que la taille
+      // réelle de l'item une fois coupé, définie par sa TrimBox. On intègre
+      // la page complète (marge + traits de coupe conservés pour le
+      // massicot), mais le ratio d'ajustement et le centrage plus bas se
+      // basent sur la TrimBox pour que la zone de coupe finale fasse
+      // exactement la taille cible, peu importe la taille de la marge autour.
+      const [embedded] = await pdfDoc.embedPdf(srcDoc, [0]);
+      const tb = srcPage.getTrimBox();
+      return {
+        kind: 'pdf',
+        source: embedded,
+        width: embedded.width,
+        height: embedded.height,
+        trimBox: { x: tb.x, y: tb.y, width: tb.width, height: tb.height },
+      };
+    } catch {
+      // Ce candidat n'est pas un PDF exploitable (absent, ou page HTML de repli du
+      // serveur) : on essaie le suivant, puis le JPEG si aucun ne convient.
     }
-  } catch {
-    // Pas de PDF exploitable pour cette référence : on se rabat sur le JPEG.
   }
 
   for (const src of getItemImageCandidates(item, imgFolder)) {

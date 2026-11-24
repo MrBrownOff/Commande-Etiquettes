@@ -1,5 +1,6 @@
 import { PDFDocument } from 'pdf-lib';
 import { LABEL_SIZE_BY_CATEGORY } from '../constants/categories';
+import { getAssetUrlCandidates } from './assetPaths';
 
 const PT_PER_IN = 72;
 // Tolérance de mesure : absorbe les écarts d'arrondi du fabricant sur la TrimBox
@@ -16,28 +17,33 @@ export const detectLabelCategoryByReference = async (
   reference: string,
   pdfFolder: string
 ): Promise<string | undefined> => {
-  try {
-    const res = await fetch(`${import.meta.env.BASE_URL}${pdfFolder}/${reference}.pdf`);
-    if (!res.ok) return undefined;
+  // Le sous-dossier de format n'est pas connu d'avance : on prend le premier candidat
+  // qui est un vrai PDF.
+  for (const url of getAssetUrlCandidates(pdfFolder, reference, 'pdf')) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) continue;
 
-    const bytes = await res.arrayBuffer();
-    const doc = await PDFDocument.load(bytes, { ignoreEncryption: true });
-    if (doc.getPageCount() === 0) return undefined;
+      const bytes = await res.arrayBuffer();
+      const doc = await PDFDocument.load(bytes, { ignoreEncryption: true });
+      if (doc.getPageCount() === 0) continue;
 
-    const trimBox = doc.getPage(0).getTrimBox();
-    const widthIn = trimBox.width / PT_PER_IN;
-    const heightIn = trimBox.height / PT_PER_IN;
+      const trimBox = doc.getPage(0).getTrimBox();
+      const widthIn = trimBox.width / PT_PER_IN;
+      const heightIn = trimBox.height / PT_PER_IN;
 
-    for (const [category, size] of Object.entries(LABEL_SIZE_BY_CATEGORY)) {
-      if (
-        Math.abs(size.widthIn - widthIn) <= TOLERANCE_IN &&
-        Math.abs(size.heightIn - heightIn) <= TOLERANCE_IN
-      ) {
-        return category;
+      for (const [category, size] of Object.entries(LABEL_SIZE_BY_CATEGORY)) {
+        if (
+          Math.abs(size.widthIn - widthIn) <= TOLERANCE_IN &&
+          Math.abs(size.heightIn - heightIn) <= TOLERANCE_IN
+        ) {
+          return category;
+        }
       }
+      return undefined;
+    } catch {
+      // Candidat absent ou non exploitable : on essaie le suivant.
     }
-    return undefined;
-  } catch {
-    return undefined;
   }
+  return undefined;
 };

@@ -2,6 +2,7 @@ import React, { useMemo, useRef, useState, useEffect } from 'react';
 import { useAppStore } from '../store/store';
 import { Search, Loader2, CheckSquare, Square, Printer, LogOut, Tag, Flag, Bookmark, Store, X, ChevronDown, History, Download, Upload } from 'lucide-react';
 import { generatePrinterPDF, PrintableKind } from '../utils/printerExport';
+import { advanceImageFallback, getImageUrlCandidates } from '../utils/assetPaths';
 import { signOutUser } from './AuthGate';
 import { StoreAssignPopover } from './StoreAssignPopover';
 import { BatchStoreAssignPopover } from './BatchStoreAssignPopover';
@@ -457,7 +458,8 @@ export const RepresentantView: React.FC = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
             {filteredItems.map((item) => {
               const isSelected = selectedItemIds.includes(item.id);
-              const initialImageSrc = item.thumbnailUrl || item.imageUrl || `${import.meta.env.BASE_URL}${imgFolder}/${item.reference}.jpg`;
+              const imageCandidates = getImageUrlCandidates(imgFolder, item.reference);
+              const initialImageSrc = item.thumbnailUrl || item.imageUrl || imageCandidates[0];
 
               return (
                 <div
@@ -483,16 +485,7 @@ export const RepresentantView: React.FC = () => {
                     <img
                       src={initialImageSrc}
                       alt={item.reference}
-                      onError={(e: React.SyntheticEvent<HTMLImageElement>) => {
-                        const target = e.currentTarget;
-                        if (!target.dataset['triedLabels']) {
-                          target.dataset['triedLabels'] = 'true';
-                          target.src = `${import.meta.env.BASE_URL}${imgFolder}/${item.reference}.jpg`;
-                        } else if (!target.dataset['triedRoot']) {
-                          target.dataset['triedRoot'] = 'true';
-                          target.src = `${import.meta.env.BASE_URL}${item.reference}.jpg`;
-                        }
-                      }}
+                      onError={(e: React.SyntheticEvent<HTMLImageElement>) => advanceImageFallback(e.currentTarget, imageCandidates)}
                       className="h-full w-full object-contain rounded bg-white p-1 shadow-xs border border-gray-200"
                     />
                   </div>

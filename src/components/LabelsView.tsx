@@ -5,6 +5,7 @@ import { StoreAssignPopover } from './StoreAssignPopover';
 import { BatchStoreAssignPopover } from './BatchStoreAssignPopover';
 import { generatePrinterPDF, getPdfFolder, PrintableKind } from '../utils/printerExport';
 import { detectLabelCategoryByReference } from '../utils/detectLabelCategory';
+import { advanceImageFallback, getImageUrlCandidates } from '../utils/assetPaths';
 
 interface LabelsViewProps {
   // Catégorie d'items gérée par cette instance de la vue : "labels" (étiquettes),
@@ -531,7 +532,8 @@ export const LabelsView: React.FC<LabelsViewProps> = ({ itemType = 'labels', fix
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
             {filteredItems.map((item) => {
               const isSelected = selectedItemIds.includes(item.id);
-              const initialImageSrc = item.thumbnailUrl || item.imageUrl || `${import.meta.env.BASE_URL}${text.folder}/${item.reference}.jpg`;
+              const imageCandidates = getImageUrlCandidates(text.folder, item.reference);
+              const initialImageSrc = item.thumbnailUrl || item.imageUrl || imageCandidates[0];
 
               return (
                 <div
@@ -560,16 +562,7 @@ export const LabelsView: React.FC<LabelsViewProps> = ({ itemType = 'labels', fix
                     <img
                       src={initialImageSrc}
                       alt={item.reference}
-                      onError={(e: React.SyntheticEvent<HTMLImageElement>) => {
-                        const target = e.currentTarget;
-                        if (!target.dataset['triedLabels']) {
-                          target.dataset['triedLabels'] = 'true';
-                          target.src = `${import.meta.env.BASE_URL}${text.folder}/${item.reference}.jpg`;
-                        } else if (!target.dataset['triedRoot']) {
-                          target.dataset['triedRoot'] = 'true';
-                          target.src = `${import.meta.env.BASE_URL}${item.reference}.jpg`;
-                        }
-                      }}
+                      onError={(e: React.SyntheticEvent<HTMLImageElement>) => advanceImageFallback(e.currentTarget, imageCandidates)}
                       className="h-full w-full object-contain rounded bg-white p-1 shadow-xs border border-gray-200"
                     />
                   </div>
