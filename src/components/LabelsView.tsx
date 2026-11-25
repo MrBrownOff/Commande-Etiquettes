@@ -5,6 +5,7 @@ import { StoreAssignPopover } from './StoreAssignPopover';
 import { BatchStoreAssignPopover } from './BatchStoreAssignPopover';
 import { generatePrinterPDF, getPdfFolder, PrintableKind } from '../utils/printerExport';
 import { detectLabelCategoryByReference } from '../utils/detectLabelCategory';
+import { getLabelSizeLabel } from '../constants/categories';
 import { advanceImageFallback, getImageUrlCandidates } from '../utils/assetPaths';
 
 interface LabelsViewProps {
@@ -533,6 +534,7 @@ export const LabelsView: React.FC<LabelsViewProps> = ({ itemType = 'labels', fix
             {filteredItems.map((item) => {
               const isSelected = selectedItemIds.includes(item.id);
               const imageCandidates = getImageUrlCandidates(text.folder, item.reference);
+              const sizeLabel = itemType === 'labels' ? getLabelSizeLabel(item.reference, item.category) : undefined;
               const initialImageSrc = item.thumbnailUrl || item.imageUrl || imageCandidates[0];
 
               return (
@@ -596,6 +598,12 @@ export const LabelsView: React.FC<LabelsViewProps> = ({ itemType = 'labels', fix
                         />
                       </div>
                     </div>
+
+                    {sizeLabel && (
+                      <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
+                        Format de l'étiquette : <span className="text-gray-800 normal-case tracking-normal">{sizeLabel}</span>
+                      </p>
+                    )}
 
                     {/* Magasins affectés sous forme de Badges */}
                     <div>
