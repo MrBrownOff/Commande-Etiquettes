@@ -81,7 +81,7 @@ const getItemImageCandidates = (item: LabelItem, imgFolder: string): string[] =>
 // KIND_CONFIG.
 export const getPdfFolder = (kind: PrintableKind): string => KIND_CONFIG[kind].pdfFolder;
 
-type TrimBox = { x: number; y: number; width: number; height: number };
+type PageBox = { x: number; y: number; width: number; height: number };
 
 type EmbeddedItem =
   | {
@@ -93,7 +93,12 @@ type EmbeddedItem =
       // (peut être plus petite que la page si celle-ci inclut une marge de
       // fond perdu et des traits de coupe pour l'imprimerie). Absent = la
       // page entière fait office de zone de coupe.
-      trimBox?: TrimBox;
+      trimBox?: PageBox;
+      // Fond perdu du PDF maître et origine de sa MediaBox, exprimés dans le repère
+      // de la page source : servent à réécrire la TrimBox et la BleedBox sur chaque
+      // page générée (drawPage crée des pages neuves qui n'héritent d'aucune boîte).
+      bleedBox?: PageBox;
+      mediaOrigin?: { x: number; y: number };
     }
   | { kind: 'jpg'; source: Awaited<ReturnType<PDFDocument['embedJpg']>>; width: number; height: number };
 
@@ -123,12 +128,16 @@ const embedItem = async (
       // exactement la taille cible, peu importe la taille de la marge autour.
       const [embedded] = await pdfDoc.embedPdf(srcDoc, [0]);
       const tb = srcPage.getTrimBox();
+      const bb = srcPage.getBleedBox();
+      const mb = srcPage.getMediaBox();
       return {
         kind: 'pdf',
         source: embedded,
         width: embedded.width,
         height: embedded.height,
         trimBox: { x: tb.x, y: tb.y, width: tb.width, height: tb.height },
+        bleedBox: { x: bb.x, y: bb.y, width: bb.width, height: bb.height },
+        mediaOrigin: { x: mb.x, y: mb.y },
       };
     } catch {
       // Ce candidat n'est pas un PDF exploitable (absent, ou page HTML de repli du
@@ -292,6 +301,24 @@ export const generatePrinterPDF = async (
       const page = pdfDoc.addPage([itemPageWidth, itemPageHeight]);
       if (embedded.kind === 'pdf') {
         page.drawPage(embedded.source, { x, y, width: w, height: h });
+        // L'imprimeur (RIP / logiciel de planche) lit la TrimBox et la BleedBox :
+        // on les recopie depuis le PDF maître, à l'échelle de la page générée.
+        const ox = embedded.mediaOrigin?.x ?? 0;
+        const oy = embedded.mediaOrigin?.y ?? 0;
+        const scaleBox = (b: PageBox) => ({
+          x: (b.x - ox) * ratio,
+          y: (b.y - oy) * ratio,
+          width: b.width * ratio,
+          height: b.height * ratio,
+        });
+        if (embedded.trimBox) {
+          const t = scaleBox(embedded.trimBox);
+          page.setTrimBox(t.x, t.y, t.width, t.height);
+        }
+        if (embedded.bleedBox) {
+          const bl = scaleBox(embedded.bleedBox);
+          page.setBleedBox(bl.x, bl.y, bl.width, bl.height);
+        }
       } else {
         page.drawImage(embedded.source, { x, y, width: w, height: h });
       }
